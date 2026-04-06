@@ -24,11 +24,13 @@ $ToolkitBanner = @($ToolkitBannerRaw -split "`r?`n" | Where-Object { -not [strin
 
 $Script:ToolkitName = 'EDCtoolkit'
 $Script:ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-$Script:ReportRoot = Join-Path -Path $Script:ScriptRoot -ChildPath 'EDC_Reports'
+$Script:ReportBaseRoot = Join-Path -Path $Script:ScriptRoot -ChildPath 'EDC_Reports'
+$Script:ReportSessionName = $null
+$Script:ReportRoot = $Script:ReportBaseRoot
 $Script:LastReports = New-Object System.Collections.Generic.List[string]
 
-if (-not (Test-Path -Path $Script:ReportRoot)) {
-    New-Item -Path $Script:ReportRoot -ItemType Directory -Force | Out-Null
+if (-not (Test-Path -Path $Script:ReportBaseRoot)) {
+    New-Item -Path $Script:ReportBaseRoot -ItemType Directory -Force | Out-Null
 }
 
 function Get-Timestamp {
@@ -51,6 +53,38 @@ function Test-CommandAvailable {
     return [bool](Get-Command -Name $Name -ErrorAction SilentlyContinue)
 }
 
+function Convert-ToSafeFolderName {
+    param([Parameter(Mandatory)][string]$Name)
+    $safe = $Name.Trim()
+    $safe = $safe -replace '[\\/:*?"<>|]', '_'
+    $safe = $safe -replace '\s+', '_'
+    $safe = $safe.Trim('.')
+    return $safe
+}
+
+function Convert-FromDmtfDateTime {
+    param(
+        [AllowNull()]$Value,
+        [switch]$Quiet
+    )
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) { return [datetime]$Value }
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+
+    try {
+        return [Management.ManagementDateTimeConverter]::ToDateTime($text)
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Status -Level Warn -Message "Unable to parse WMI datetime value: '$text'"
+        }
+        return $null
+    }
+}
+
 function Show-Header {
     Clear-Host
     foreach ($line in $ToolkitBanner) {
@@ -60,6 +94,36 @@ function Show-Header {
     Write-Host (' Toolkit: {0}  |  Reports: {1}' -f $Script:ToolkitName, $Script:ReportRoot) -ForegroundColor Gray
     Write-Host (' Session: {0}  |  Admin: {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $(if (Test-IsAdmin) { 'Yes' } else { 'No' })) -ForegroundColor Gray
     Write-Host ('=' * 74) -ForegroundColor DarkGray
+}
+
+function Initialize-ReportSession {
+    while ($true) {
+        Show-Header
+        Write-Section 'Report Session Setup'
+        $rawName = Read-Host 'Name The Report'
+        if ([string]::IsNullOrWhiteSpace($rawName)) {
+            $rawName = 'Report_{0}' -f (Get-Date -Format 'yyyyMMdd_HHmmss')
+        }
+        $safeName = Convert-ToSafeFolderName -Name $rawName
+        if ([string]::IsNullOrWhiteSpace($safeName)) {
+            Write-Status -Level Warn -Message 'Report name is invalid after sanitization. Please enter another name.'
+            Pause-Toolkit
+            continue
+        }
+        $target = Join-Path -Path $Script:ReportBaseRoot -ChildPath $safeName
+        try {
+            if (-not (Test-Path -Path $target)) { New-Item -Path $target -ItemType Directory -Force | Out-Null }
+            $Script:ReportSessionName = $safeName
+            $Script:ReportRoot = $target
+            Write-Status -Level Success -Message "Reports will save to: $Script:ReportRoot"
+            Pause-Toolkit
+            return
+        }
+        catch {
+            Write-Status -Level Error -Message ("Unable to create report folder '{0}': {1}" -f $safeName, $_.Exception.Message)
+            Pause-Toolkit
+        }
+    }
 }
 
 function Write-Section {
@@ -218,7 +282,8 @@ function Invoke-FullSystemAudit {
     $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue
     $ram = Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue
     $disk = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue
-    $uptime = if ($os.LastBootUpTime) { (Get-Date) - [Management.ManagementDateTimeConverter]::ToDateTime($os.LastBootUpTime) } else { $null }
+    $lastBoot = Convert-FromDmtfDateTime -Value $os.LastBootUpTime -Quiet
+    $uptime = if ($lastBoot) { (Get-Date) - $lastBoot } else { $null }
 
     $report = @()
     $report += "Host: $($env:COMPUTERNAME)"
@@ -420,7 +485,12 @@ function Get-SystemUptime {
         return
     }
 
-    $lastBoot = [Management.ManagementDateTimeConverter]::ToDateTime($os.LastBootUpTime)
+    $lastBoot = Convert-FromDmtfDateTime -Value $os.LastBootUpTime
+    if (-not $lastBoot) {
+        Show-AndSaveText -Title 'System Uptime' -Prefix 'System_Uptime' -Text 'Unable to determine system uptime (invalid boot timestamp format).'
+        return
+    }
+
     $uptime = (Get-Date) - $lastBoot
     $text = @(
         "Last Boot: $lastBoot",
@@ -983,7 +1053,7 @@ function Invoke-CommonServiceQuickActions {
     Write-Host '3. Restart BITS'
     Write-Host '4. Query Spooler'
     Write-Host '5. Query wuauserv'
-    Write-Host 'B. Back'
+    Write-Host '0. Back'
 
     $choice = Read-Host 'Select option'
     switch ($choice.ToUpperInvariant()) {
@@ -1040,7 +1110,7 @@ function Invoke-CategoryOnlyReport {
     Write-Host '4. Users'
     Write-Host '5. Security'
     Write-Host '6. Services'
-    Write-Host 'B. Back'
+    Write-Host '0. Back'
 
     $choice = Read-Host 'Select category'
     switch ($choice.ToUpperInvariant()) {
@@ -1251,7 +1321,7 @@ function Invoke-BuiltInToolsMenu {
     Write-Host '4. services.msc'
     Write-Host '5. ncpa.cpl'
     Write-Host '6. compmgmt.msc'
-    Write-Host 'B. Back'
+    Write-Host '0. Back'
 
     $choice = Read-Host 'Select tool'
     switch ($choice.ToUpperInvariant()) {
@@ -1400,10 +1470,10 @@ function Show-CategoryMenu {
             }
         }
 
-        Write-Host 'B. Back'
+        Write-Host '0. Back'
         $choice = Read-Host 'Select action'
 
-        if ($choice -match '^(b|back)$') {
+        if ($choice -eq '0') {
             return
         }
 
@@ -1463,4 +1533,5 @@ function Show-MainMenu {
     }
 }
 
+Initialize-ReportSession
 Show-MainMenu
