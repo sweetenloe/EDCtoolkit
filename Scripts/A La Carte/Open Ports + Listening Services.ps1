@@ -1,0 +1,1 @@
+Get-NetTCPConnection -State Listen | Select LocalAddress, LocalPort, OwningProcess

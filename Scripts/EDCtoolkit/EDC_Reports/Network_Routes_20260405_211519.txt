@@ -1,0 +1,58 @@
+﻿Toolkit: EDCtoolkit
+Generated: 2026-04-05 21:15:19
+Host: LAPTOP-DUIVUAGM
+User: enloe
+======================================================================
+
+DestinationPrefix             NextHop     RouteMetric InterfaceAlias                     AddressFamily
+-----------------             -------     ----------- --------------                     -------------
+255.255.255.255/32            0.0.0.0             256 Wi-Fi 2                                     IPv4
+255.255.255.255/32            0.0.0.0             256 Ethernet 4                                  IPv4
+255.255.255.255/32            0.0.0.0             256 Wi-Fi 5                                     IPv4
+255.255.255.255/32            0.0.0.0             256 vEthernet (WSL (Hyper-V firewall))          IPv4
+255.255.255.255/32            0.0.0.0             256 vEthernet (Default Switch)                  IPv4
+255.255.255.255/32            0.0.0.0             256 Wi-Fi                                       IPv4
+255.255.255.255/32            0.0.0.0             256 Bluetooth Network Connection                IPv4
+255.255.255.255/32            0.0.0.0             256 Ethernet                                    IPv4
+255.255.255.255/32            0.0.0.0             256 Ethernet 2                                  IPv4
+255.255.255.255/32            0.0.0.0             256 Loopback Pseudo-Interface 1                 IPv4
+224.0.0.0/4                   0.0.0.0             256 Wi-Fi 2                                     IPv4
+224.0.0.0/4                   0.0.0.0             256 Ethernet 4                                  IPv4
+224.0.0.0/4                   0.0.0.0             256 Wi-Fi 5                                     IPv4
+224.0.0.0/4                   0.0.0.0             256 vEthernet (WSL (Hyper-V firewall))          IPv4
+224.0.0.0/4                   0.0.0.0             256 vEthernet (Default Switch)                  IPv4
+224.0.0.0/4                   0.0.0.0             256 Wi-Fi                                       IPv4
+224.0.0.0/4                   0.0.0.0             256 Bluetooth Network Connection                IPv4
+224.0.0.0/4                   0.0.0.0             256 Ethernet                                    IPv4
+224.0.0.0/4                   0.0.0.0             256 Ethernet 2                                  IPv4
+224.0.0.0/4                   0.0.0.0             256 Loopback Pseudo-Interface 1                 IPv4
+192.168.95.255/32             0.0.0.0             256 vEthernet (Default Switch)                  IPv4
+192.168.80.1/32               0.0.0.0             256 vEthernet (Default Switch)                  IPv4
+192.168.80.0/20               0.0.0.0             256 vEthernet (Default Switch)                  IPv4
+192.168.56.255/32             0.0.0.0             256 Ethernet 2                                  IPv4
+192.168.56.1/32               0.0.0.0             256 Ethernet 2                                  IPv4
+192.168.56.0/24               0.0.0.0             256 Ethernet 2                                  IPv4
+192.168.1.255/32              0.0.0.0             256 Wi-Fi                                       IPv4
+192.168.1.198/32              0.0.0.0             256 Wi-Fi                                       IPv4
+192.168.1.0/24                0.0.0.0             256 Wi-Fi                                       IPv4
+172.26.31.255/32              0.0.0.0             256 vEthernet (WSL (Hyper-V firewall))          IPv4
+172.26.16.1/32                0.0.0.0             256 vEthernet (WSL (Hyper-V firewall))          IPv4
+172.26.16.0/20                0.0.0.0             256 vEthernet (WSL (Hyper-V firewall))          IPv4
+154.47.25.129/32              192.168.1.1          35 Wi-Fi                                       IPv4
+127.255.255.255/32            0.0.0.0             256 Loopback Pseudo-Interface 1                 IPv4
+127.0.0.1/32                  0.0.0.0             256 Loopback Pseudo-Interface 1                 IPv4
+127.0.0.0/8                   0.0.0.0             256 Loopback Pseudo-Interface 1                 IPv4
+10.2.0.2/32                   0.0.0.0             256 ProtonVPN                                   IPv4
+0.0.0.0/0                     0.0.0.0               0 ProtonVPN                                   IPv4
+0.0.0.0/0                     192.168.1.1           0 Wi-Fi                                       IPv4
+ff00::/8                      ::                  256 vEthernet (WSL (Hyper-V firewall))          IPv6
+ff00::/8                      ::                  256 vEthernet (Default Switch)                  IPv6
+ff00::/8                      ::                  256 Loopback Pseudo-Interface 1                 IPv6
+fe80::d6d2:b58:8387:5b04/128  ::                  256 vEthernet (Default Switch)                  IPv6
+fe80::8b8d:6141:1d38:28c1/128 ::                  256 vEthernet (WSL (Hyper-V firewall))          IPv6
+fe80::/64                     ::                  256 vEthernet (WSL (Hyper-V firewall))          IPv6
+fe80::/64                     ::                  256 vEthernet (Default Switch)                  IPv6
+::1/128                       ::                  256 Loopback Pseudo-Interface 1                 IPv6
+
+
+

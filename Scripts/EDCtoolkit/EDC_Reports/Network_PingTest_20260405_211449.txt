@@ -1,0 +1,15 @@
+﻿Toolkit: EDCtoolkit
+Generated: 2026-04-05 21:14:49
+Host: LAPTOP-DUIVUAGM
+User: enloe
+======================================================================
+
+Source        Destination     IPV4Address      IPV6Address                              Bytes    Time(ms) 
+------        -----------     -----------      -----------                              -----    -------- 
+LAPTOP-DUI... 8.8.8.8         8.8.8.8                                                   32       47       
+LAPTOP-DUI... 8.8.8.8         8.8.8.8                                                   32       19       
+LAPTOP-DUI... 8.8.8.8         8.8.8.8                                                   32       18       
+LAPTOP-DUI... 8.8.8.8         8.8.8.8                                                   32       18       
+
+
+
