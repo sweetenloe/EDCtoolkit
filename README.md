@@ -1,4 +1,4 @@
-<div align="center"><h1> ｅｄｃｔｏｏｌｋｉｔ.ｐｓ１</h1>
+<div align="center"><h1> ｅｄｃｔｏｏｌｋｉｔ</h1>
 PoSh Toolkit for querying info on devices <b>YOU</b> need to troubleshoot.</div>
 <br><br>
 
