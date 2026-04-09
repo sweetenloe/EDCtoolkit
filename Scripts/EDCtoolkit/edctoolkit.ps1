@@ -189,7 +189,7 @@ function Select-ArrowMenuItem {
         [Parameter(Mandatory)][string]$SectionTitle,
         [Parameter(Mandatory)][object[]]$Items,
         [int]$DefaultIndex = 0,
-        [string]$HelpText = 'Use ↑/↓ to move, Enter to select. Esc/← to go back.'
+        [string]$HelpText = 'Use Up/Down to move, Enter to select. Esc/Left to go back.'
     )
 
     $menuItems = foreach ($item in $Items) {
@@ -213,8 +213,6 @@ function Select-ArrowMenuItem {
     }
 
     $selectedIndex = [Math]::Max(0, [Math]::Min($DefaultIndex, $menuItems.Count - 1))
-    $numberBuffer = ''
-    $lastDigitAt = [datetime]::MinValue
 
     $arrowSupported = ($null -ne $Host) -and ($null -ne $Host.UI) -and ($null -ne $Host.UI.RawUI)
     if (-not $arrowSupported) {
@@ -224,128 +222,184 @@ function Select-ArrowMenuItem {
         Write-Host ''
 
         for ($i = 0; $i -lt $menuItems.Count; $i++) {
-            Write-Host ('{0}. {1}' -f ($i + 1), $menuItems[$i].Text)
+            Write-Host ('- {0}' -f $menuItems[$i].Text)
         }
 
-        $pick = Read-Host 'Enter number'
-        if ($pick -notmatch '^[0-9]+$') { return $null }
-        $idx = [int]$pick - 1
-        if ($idx -lt 0 -or $idx -ge $menuItems.Count) { return $null }
-        return $menuItems[$idx].Value
+        while ($true) {
+            $pick = Read-Host 'Type selection (blank = cancel)'
+            if ([string]::IsNullOrWhiteSpace($pick)) { return $null }
+            if ($pick -match '^[0-9]+$') {
+                Write-Status -Level Warn -Message 'Numeric selection is disabled. Type the option name.'
+                continue
+            }
+
+            $matches = @($menuItems | Where-Object { $_.Text.StartsWith($pick, [StringComparison]::OrdinalIgnoreCase) })
+            if ($matches.Count -eq 1) { return $matches[0].Value }
+
+            if ($matches.Count -lt 1) {
+                Write-Status -Level Warn -Message 'No match. Try again.'
+                continue
+            }
+
+            Write-Status -Level Warn -Message 'Ambiguous match. Type more characters.'
+        }
     }
 
-    while ($true) {
+    function Read-MenuKey {
+        try { return $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }
+        try { return [Console]::ReadKey($true) } catch { }
+        throw 'Interactive key input is unavailable in this host.'
+    }
+
+    function Get-MenuKeyName {
+        param([Parameter(Mandatory)]$KeyInfo)
+
+        $keyProp = $KeyInfo.PSObject.Properties['Key']
+        if ($null -ne $keyProp -and $null -ne $keyProp.Value) {
+            try { return [string]$keyProp.Value } catch { }
+        }
+
+        $vkProp = $KeyInfo.PSObject.Properties['VirtualKeyCode']
+        if ($null -ne $vkProp -and $null -ne $vkProp.Value) {
+            $vk = [int]$vkProp.Value
+            switch ($vk) {
+                13 { return 'Enter' }
+                27 { return 'Escape' }
+                33 { return 'PageUp' }
+                34 { return 'PageDown' }
+                35 { return 'End' }
+                36 { return 'Home' }
+                37 { return 'LeftArrow' }
+                38 { return 'UpArrow' }
+                40 { return 'DownArrow' }
+                default { return '' }
+            }
+        }
+
+        return ''
+    }
+
+    function Write-MenuLine {
+        param(
+            [Parameter(Mandatory)][int]$Index,
+            [Parameter(Mandatory)][bool]$Selected,
+            [Parameter(Mandatory)][int]$Width
+        )
+
+        $line = $menuItems[$Index].Text
+        $line = if ($Selected) { ' > ' + $line } else { '   ' + $line }
+        if ($line.Length -gt $Width) { $line = $line.Substring(0, $Width) }
+        $line = $line.PadRight($Width)
+
+        if ($Selected) {
+            $oldFg = [Console]::ForegroundColor
+            $oldBg = [Console]::BackgroundColor
+            [Console]::ForegroundColor = [ConsoleColor]::Black
+            [Console]::BackgroundColor = [ConsoleColor]::Gray
+            [Console]::Write($line)
+            [Console]::ForegroundColor = $oldFg
+            [Console]::BackgroundColor = $oldBg
+        }
+        else {
+            [Console]::Write($line)
+        }
+    }
+
+    $oldCursorVisible = $true
+    try { $oldCursorVisible = [Console]::CursorVisible } catch { }
+
+    try {
+        try { [Console]::CursorVisible = $false } catch { }
+
+        # Render the menu once, then move the highlight in-place when Up/Down is pressed.
         Show-Header
         Write-Section $SectionTitle
         if (-not [string]::IsNullOrWhiteSpace($HelpText)) {
             Write-Host $HelpText -ForegroundColor DarkGray
         }
-        if (-not [string]::IsNullOrWhiteSpace($numberBuffer)) {
-            Write-Host ("Number: {0}" -f $numberBuffer) -ForegroundColor DarkGray
-        }
         Write-Host ''
 
+        $menuTopRow = $Host.UI.RawUI.CursorPosition.Y
+        $bufferWidth = [Math]::Max(20, ($Host.UI.RawUI.BufferSize.Width - 1))
+
         for ($i = 0; $i -lt $menuItems.Count; $i++) {
-            $line = ('{0}. {1}' -f ($i + 1), $menuItems[$i].Text)
-            if ($i -eq $selectedIndex) {
-                Write-Host (" > {0}" -f $line) -ForegroundColor Black -BackgroundColor Gray
-            }
-            else {
-                Write-Host ("   {0}" -f $line)
-            }
+            Write-MenuLine -Index $i -Selected ($i -eq $selectedIndex) -Width $bufferWidth
+            [Console]::WriteLine()
         }
 
-        try {
-            $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-        }
-        catch {
-            # Fall back to numbered selection if the host doesn't support ReadKey reliably.
-            Show-Header
-            Write-Section $SectionTitle
-            Write-Host $HelpText -ForegroundColor DarkGray
-            Write-Host ''
+        while ($true) {
+            $key = Read-MenuKey
+            $keyName = Get-MenuKeyName -KeyInfo $key
+            switch ($keyName) {
+                'UpArrow' {
+                    $prev = $selectedIndex
+                    $selectedIndex = $selectedIndex - 1
+                    if ($selectedIndex -lt 0) { $selectedIndex = $menuItems.Count - 1 }
 
-            for ($i = 0; $i -lt $menuItems.Count; $i++) {
-                Write-Host ('{0}. {1}' -f ($i + 1), $menuItems[$i].Text)
-            }
-
-            $pick = Read-Host 'Enter number'
-            if ($pick -notmatch '^[0-9]+$') { return $null }
-            $idx = [int]$pick - 1
-            if ($idx -lt 0 -or $idx -ge $menuItems.Count) { return $null }
-            return $menuItems[$idx].Value
-        }
-        switch ($key.Key) {
-            'UpArrow' {
-                $selectedIndex = ($selectedIndex - 1)
-                if ($selectedIndex -lt 0) { $selectedIndex = $menuItems.Count - 1 }
-                $numberBuffer = ''
-            }
-            'DownArrow' {
-                $selectedIndex = ($selectedIndex + 1)
-                if ($selectedIndex -ge $menuItems.Count) { $selectedIndex = 0 }
-                $numberBuffer = ''
-            }
-            'PageUp' {
-                $selectedIndex = [Math]::Max(0, $selectedIndex - 10)
-                $numberBuffer = ''
-            }
-            'PageDown' {
-                $selectedIndex = [Math]::Min($menuItems.Count - 1, $selectedIndex + 10)
-                $numberBuffer = ''
-            }
-            'Home' {
-                $selectedIndex = 0
-                $numberBuffer = ''
-            }
-            'End' {
-                $selectedIndex = $menuItems.Count - 1
-                $numberBuffer = ''
-            }
-            'LeftArrow' {
-                return $null
-            }
-            'Escape' {
-                return $null
-            }
-            'Backspace' {
-                if ($numberBuffer.Length -gt 0) {
-                    $numberBuffer = $numberBuffer.Substring(0, $numberBuffer.Length - 1)
+                    $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $prev))
+                    Write-MenuLine -Index $prev -Selected:$false -Width $bufferWidth
+                    $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $selectedIndex))
+                    Write-MenuLine -Index $selectedIndex -Selected:$true -Width $bufferWidth
                 }
-            }
-            'Enter' {
-                if (-not [string]::IsNullOrWhiteSpace($numberBuffer) -and $numberBuffer -match '^[0-9]+$') {
-                    $idx = [int]$numberBuffer - 1
-                    if ($idx -ge 0 -and $idx -lt $menuItems.Count) {
-                        return $menuItems[$idx].Value
-                    }
-                    $numberBuffer = ''
-                    continue
-                }
-                return $menuItems[$selectedIndex].Value
-            }
-            default {
-                $ch = $key.Character
-                if ($ch -match '^[0-9]$') {
-                    $now = Get-Date
-                    if (($now - $lastDigitAt).TotalSeconds -gt 1.2) {
-                        $numberBuffer = ''
-                    }
-                    $lastDigitAt = $now
-                    $numberBuffer += [string]$ch
+                'DownArrow' {
+                    $prev = $selectedIndex
+                    $selectedIndex = $selectedIndex + 1
+                    if ($selectedIndex -ge $menuItems.Count) { $selectedIndex = 0 }
 
-                    if ($numberBuffer -match '^[0-9]+$') {
-                        $idx = [int]$numberBuffer - 1
-                        if ($idx -ge 0 -and $idx -lt $menuItems.Count) {
-                            $selectedIndex = $idx
-                        }
+                    $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $prev))
+                    Write-MenuLine -Index $prev -Selected:$false -Width $bufferWidth
+                    $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $selectedIndex))
+                    Write-MenuLine -Index $selectedIndex -Selected:$true -Width $bufferWidth
+                }
+                'PageUp' {
+                    $prev = $selectedIndex
+                    $selectedIndex = [Math]::Max(0, $selectedIndex - 10)
+                    if ($prev -ne $selectedIndex) {
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $prev))
+                        Write-MenuLine -Index $prev -Selected:$false -Width $bufferWidth
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $selectedIndex))
+                        Write-MenuLine -Index $selectedIndex -Selected:$true -Width $bufferWidth
                     }
                 }
-                else {
-                    $numberBuffer = ''
+                'PageDown' {
+                    $prev = $selectedIndex
+                    $selectedIndex = [Math]::Min($menuItems.Count - 1, $selectedIndex + 10)
+                    if ($prev -ne $selectedIndex) {
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $prev))
+                        Write-MenuLine -Index $prev -Selected:$false -Width $bufferWidth
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $selectedIndex))
+                        Write-MenuLine -Index $selectedIndex -Selected:$true -Width $bufferWidth
+                    }
                 }
+                'Home' {
+                    $prev = $selectedIndex
+                    $selectedIndex = 0
+                    if ($prev -ne $selectedIndex) {
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $prev))
+                        Write-MenuLine -Index $prev -Selected:$false -Width $bufferWidth
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $selectedIndex))
+                        Write-MenuLine -Index $selectedIndex -Selected:$true -Width $bufferWidth
+                    }
+                }
+                'End' {
+                    $prev = $selectedIndex
+                    $selectedIndex = $menuItems.Count - 1
+                    if ($prev -ne $selectedIndex) {
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $prev))
+                        Write-MenuLine -Index $prev -Selected:$false -Width $bufferWidth
+                        $Host.UI.RawUI.CursorPosition = New-Object Management.Automation.Host.Coordinates(0, ($menuTopRow + $selectedIndex))
+                        Write-MenuLine -Index $selectedIndex -Selected:$true -Width $bufferWidth
+                    }
+                }
+                'LeftArrow' { return $null }
+                'Escape' { return $null }
+                'Enter' { return $menuItems[$selectedIndex].Value }
+                default { }
             }
         }
+    }
+    finally {
+        try { [Console]::CursorVisible = $oldCursorVisible } catch { }
     }
 }
 
@@ -1677,7 +1731,7 @@ function Copy-TextToClipboardHelper {
     }
     $items += [pscustomobject]@{ Text = 'Cancel'; Value = $null }
 
-    $picked = Select-ArrowMenuItem -SectionTitle 'Select Report to Copy to Clipboard' -Items $items -DefaultIndex 0 -HelpText 'Use ↑/↓ then Enter. Esc/← to cancel.'
+    $picked = Select-ArrowMenuItem -SectionTitle 'Select Report to Copy to Clipboard' -Items $items -DefaultIndex 0 -HelpText 'Use Up/Down then Enter. Esc/Left to cancel.'
     if ($null -eq $picked) { return }
 
     $content = Get-Content -Path $picked.FullName -Raw -ErrorAction SilentlyContinue
@@ -1908,7 +1962,7 @@ function Show-MainMenu {
             [pscustomobject]@{ Text = 'Reports'; Value = 'Reports' }
             [pscustomobject]@{ Text = 'Tools/Utilities'; Value = 'Tools/Utilities' }
             [pscustomobject]@{ Text = 'Exit'; Value = '__EXIT__' }
-        ) -DefaultIndex 0 -HelpText 'Use ↑/↓ then Enter. Esc/← exits.'
+        ) -DefaultIndex 0 -HelpText 'Use Up/Down then Enter. Esc/Left exits.'
 
         if ($null -eq $picked -or $picked -eq '__EXIT__') { return }
         Show-CategoryMenu -Category $picked
