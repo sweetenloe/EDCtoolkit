@@ -6,7 +6,7 @@ PoSh Toolkit for querying info on devices <b>YOU</b> need to troubleshoot.</div>
 
 | **System Auditing** | **Network Diagnostics** | **File System Utilities** | **User Management** | **Security Features** |
 |--------------------|------------------------|--------------------------|---------------------|----------------------|
-| Full System Audit | IP Configuration | Recursive File Search | Local Users List | BitLocker Status |
+| Full System Audit | IP Configuration | User Data Backup (Common + Custom Paths) | Local Users List | BitLocker Status |
 | Basic Hardware Info | Network Adapter Summary | Temp File Cleanup | Administrators Group Members | Firewall Profile Status |
 | OS Info & Build Details | ARP Table | Large Files Finder | Last Logon Info | Defender Status |
 | CPU Info & Performance Metrics | Neighbor Table | Recent Files Listing | Profile Folder Listing | Suspicious Persistence Check (Startup/Scheduled Tasks) |

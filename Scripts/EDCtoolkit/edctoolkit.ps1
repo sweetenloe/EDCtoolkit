@@ -673,6 +673,180 @@ function Invoke-NslookupHelper {
     Show-AndSaveText -Title 'NSLookup Helper' -Prefix 'Network_NSLookup' -Text $text
 }
 
+function Get-CommonBackupSources {
+    $profile = $env:USERPROFILE
+    $roaming = $env:APPDATA
+    $local = $env:LOCALAPPDATA
+
+    return @(
+        [pscustomobject]@{ Label='Desktop'; Path=(Join-Path $profile 'Desktop'); IsDefault=$true },
+        [pscustomobject]@{ Label='Documents'; Path=(Join-Path $profile 'Documents'); IsDefault=$true },
+        [pscustomobject]@{ Label='Downloads'; Path=(Join-Path $profile 'Downloads'); IsDefault=$true },
+        [pscustomobject]@{ Label='Pictures'; Path=(Join-Path $profile 'Pictures'); IsDefault=$true },
+        [pscustomobject]@{ Label='Videos'; Path=(Join-Path $profile 'Videos'); IsDefault=$true },
+        [pscustomobject]@{ Label='Music'; Path=(Join-Path $profile 'Music'); IsDefault=$false },
+        [pscustomobject]@{ Label='Favorites'; Path=(Join-Path $profile 'Favorites'); IsDefault=$false },
+        [pscustomobject]@{ Label='Firefox Profiles'; Path=(Join-Path $roaming 'Mozilla\Firefox\Profiles'); IsDefault=$true },
+        [pscustomobject]@{ Label='Chrome User Data'; Path=(Join-Path $local 'Google\Chrome\User Data'); IsDefault=$true },
+        [pscustomobject]@{ Label='Edge User Data'; Path=(Join-Path $local 'Microsoft\Edge\User Data'); IsDefault=$true }
+    )
+}
+
+function Copy-BackupSource {
+    param(
+        [Parameter(Mandatory)]$Source,
+        [Parameter(Mandatory)][string]$DestinationRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $Source.Path)) {
+        return [pscustomobject]@{
+            SourceLabel = $Source.Label
+            SourcePath  = $Source.Path
+            TargetPath  = $null
+            Status      = 'Skipped'
+            Details     = 'Source path does not exist.'
+        }
+    }
+
+    $leafName = Split-Path -Path $Source.Path -Leaf
+    if ([string]::IsNullOrWhiteSpace($leafName)) {
+        $leafName = Convert-ToSafeFolderName -Name $Source.Label
+    }
+
+    $targetName = '{0}_{1}' -f (Convert-ToSafeFolderName -Name $Source.Label), (Convert-ToSafeFolderName -Name $leafName)
+    $target = Join-Path -Path $DestinationRoot -ChildPath $targetName
+
+    try {
+        if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-CommandAvailable -Name robocopy) {
+            New-Item -Path $target -ItemType Directory -Force | Out-Null
+            $null = robocopy $Source.Path $target /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
+        }
+        else {
+            Copy-Item -LiteralPath $Source.Path -Destination $target -Recurse -Force -ErrorAction Stop
+        }
+
+        return [pscustomobject]@{
+            SourceLabel = $Source.Label
+            SourcePath  = $Source.Path
+            TargetPath  = $target
+            Status      = 'Copied'
+            Details     = 'Completed'
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            SourceLabel = $Source.Label
+            SourcePath  = $Source.Path
+            TargetPath  = $target
+            Status      = 'Error'
+            Details     = $_.Exception.Message
+        }
+    }
+}
+
+function Invoke-UserDataBackup {
+    Write-Section 'User Data Backup'
+    Write-Status -Message 'Build a backup from common personal folders + browser data, then optionally add custom paths.'
+
+    $backupRootInput = Read-Host 'Backup destination root (default: reports folder\User_Backups)'
+    $backupRoot = if ([string]::IsNullOrWhiteSpace($backupRootInput)) {
+        Join-Path -Path $Script:ReportRoot -ChildPath 'User_Backups'
+    }
+    else {
+        $backupRootInput
+    }
+
+    if (-not (Test-Path -LiteralPath $backupRoot)) {
+        try {
+            New-Item -Path $backupRoot -ItemType Directory -Force | Out-Null
+        }
+        catch {
+            Write-Status -Level Error -Message ("Unable to create backup root '{0}': {1}" -f $backupRoot, $_.Exception.Message)
+            return
+        }
+    }
+
+    $sessionFolder = Join-Path -Path $backupRoot -ChildPath ('{0}_{1}' -f $env:USERNAME, (Get-Timestamp))
+    New-Item -Path $sessionFolder -ItemType Directory -Force | Out-Null
+
+    $common = Get-CommonBackupSources
+    Write-Host ''
+    Write-Host 'Common backup sources:' -ForegroundColor Cyan
+    for ($i = 0; $i -lt $common.Count; $i++) {
+        $item = $common[$i]
+        $defaultText = if ($item.IsDefault) { 'Default' } else { 'Optional' }
+        Write-Host ('[{0}] ({1}) {2} -> {3}' -f ($i + 1), $defaultText, $item.Label, $item.Path)
+    }
+    Write-Host ''
+    Write-Host 'Selection options:'
+    Write-Host '  - Press Enter = default set'
+    Write-Host '  - A = all common locations'
+    Write-Host '  - N = none'
+    Write-Host '  - Or enter comma-separated numbers (example: 1,2,4,9)'
+
+    $pickRaw = Read-Host 'Select common locations'
+    $selectedCommon = @()
+    $normalizedPick = if ($null -eq $pickRaw) { '' } else { $pickRaw.Trim().ToUpperInvariant() }
+    switch -Regex ($normalizedPick) {
+        '^$' { $selectedCommon = $common | Where-Object { $_.IsDefault } }
+        '^A$' { $selectedCommon = $common }
+        '^N$' { $selectedCommon = @() }
+        default {
+            $indexes = $pickRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ } | Sort-Object -Unique
+            foreach ($idx in $indexes) {
+                if ($idx -ge 1 -and $idx -le $common.Count) {
+                    $selectedCommon += $common[$idx - 1]
+                }
+            }
+        }
+    }
+
+    $extraRaw = Read-Host 'Additional file/folder paths (optional, separate with ;)'
+    $extraSources = New-Object System.Collections.Generic.List[object]
+    if (-not [string]::IsNullOrWhiteSpace($extraRaw)) {
+        $extraPaths = $extraRaw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique
+        foreach ($path in $extraPaths) {
+            $extraSources.Add([pscustomobject]@{
+                Label     = 'CustomPath'
+                Path      = $path
+                IsDefault = $false
+            })
+        }
+    }
+
+    $allSources = New-Object System.Collections.Generic.List[object]
+    foreach ($src in $selectedCommon) { $allSources.Add($src) }
+    foreach ($src in $extraSources) { $allSources.Add($src) }
+
+    if ($allSources.Count -eq 0) {
+        Write-Status -Level Warn -Message 'No backup sources selected.'
+        Remove-Item -LiteralPath $sessionFolder -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    Write-Status -Message ("Creating backup in: {0}" -f $sessionFolder)
+    $results = foreach ($source in $allSources) {
+        Copy-BackupSource -Source $source -DestinationRoot $sessionFolder
+    }
+
+    Write-Section 'Backup Results'
+    $results | Format-Table -AutoSize
+
+    $summary = @()
+    $summary += "Backup root: $backupRoot"
+    $summary += "Session folder: $sessionFolder"
+    $summary += ('=' * 70)
+    $summary += ''
+    $summary += ($results | Format-Table -AutoSize | Out-String -Width 4096)
+
+    Save-TextReport -Prefix 'FileSystem_UserBackup' -Text ($summary -join [Environment]::NewLine) | Out-Null
+    Write-Status -Level Success -Message 'Backup workflow finished. Review report for copied/skipped/error entries.'
+}
+
 function Invoke-RecursiveFileSearch {
     $path = Read-Host 'Search path (default: C:\)'
     if ([string]::IsNullOrWhiteSpace($path)) { $path = 'C:\' }
@@ -1369,6 +1543,7 @@ $Script:MenuActions = [ordered]@{
         @{ Label='nslookup helper'; Handler='Invoke-NslookupHelper' }
     )
     'File System' = @(
+        @{ Label='User data backup (common + custom paths)'; Handler='Invoke-UserDataBackup' },
         @{ Label='Recursive file search by pattern'; Handler='Invoke-RecursiveFileSearch' },
         @{ Label='Temp cleanup'; Handler='Invoke-TempCleanup' },
         @{ Label='Large files finder'; Handler='Find-LargeFiles' },
