@@ -1,5 +1,5 @@
 <div align="center"><h1> ｅｄｃｔｏｏｌｋｉｔ</h1>
-PoSh Toolkit for querying info on devices <b>YOU</b> need to troubleshoot.</div>
+<h4>PoSh Toolkit for querying info on devices <b>YOU</b> need to troubleshoot.</div></h4>
 <br><br>
 
 ## Toolkit Overview
@@ -21,5 +21,7 @@ PoSh Toolkit for querying info on devices <b>YOU</b> need to troubleshoot.</div>
 | Environment Variables | Traceroute |  |  |  |
 | System Uptime | NSLookup Helper |  |  |  |
 
-- All scan results are automatically saved to timestamped report files in the `~\Scripts\EDCtoolkit\EDC_Reports\<name-of-your-project>` directory.
+**Non-Interactive**
+> Use `-ListFlags` to do the obvious and `-Flag <flag_name>` to use them.
+<div align="center"><i>All scan results are automatically saved to timestamped report files in the `~\Scripts\EDCtoolkit\EDC_Reports\<name-of-your-project>` directory.</i></div>
 <div align="center"> <h3> <i> MANUALLY TESTED IN SANDBOXED ENVIRONMENT </i></h3><b> <br> 𝑩𝑼𝑻 𝑹𝑬𝑴𝑬𝑴𝑩𝑬𝑹, 𝑨𝑳𝑾𝑨𝒀𝑺 𝑻𝑨𝑲𝑬 𝑨 𝑩𝑨𝑪𝑲𝑼𝑷 </center> </b> </div>
