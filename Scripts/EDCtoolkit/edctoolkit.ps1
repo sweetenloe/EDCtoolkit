@@ -1,5 +1,12 @@
 #Requires -Version 5.1
 
+[CmdletBinding()]
+param(
+    [string]$Flag,
+    [switch]$ListFlags,
+    [string]$ReportName
+)
+
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
 
@@ -91,6 +98,38 @@ function Show-Header {
 }
 
 function Initialize-ReportSession {
+    param(
+        [AllowNull()][string]$Name,
+        [switch]$NonInteractive
+    )
+
+    if ($NonInteractive) {
+        $rawName = if ([string]::IsNullOrWhiteSpace($Name)) {
+            'Report_{0}' -f (Get-Date -Format 'yyyyMMdd_HHmmss')
+        }
+        else {
+            $Name
+        }
+
+        $safeName = Convert-ToSafeFolderName -Name $rawName
+        if ([string]::IsNullOrWhiteSpace($safeName)) {
+            $safeName = 'Report_{0}' -f (Get-Date -Format 'yyyyMMdd_HHmmss')
+        }
+
+        $target = Join-Path -Path $Script:ReportBaseRoot -ChildPath $safeName
+        try {
+            if (-not (Test-Path -Path $target)) { New-Item -Path $target -ItemType Directory -Force | Out-Null }
+            $Script:ReportSessionName = $safeName
+            $Script:ReportRoot = $target
+            Write-Status -Level Success -Message "Reports will save to: $Script:ReportRoot"
+            return
+        }
+        catch {
+            Write-Status -Level Error -Message ("Unable to create report folder '{0}': {1}" -f $safeName, $_.Exception.Message)
+            return
+        }
+    }
+
     while ($true) {
         Show-Header
         Write-Section 'Report Session Setup'
@@ -142,6 +181,172 @@ function Write-Status {
 
 function Pause-Toolkit {
     Read-Host 'Press Enter to continue'
+}
+
+function Select-ArrowMenuItem {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SectionTitle,
+        [Parameter(Mandatory)][object[]]$Items,
+        [int]$DefaultIndex = 0,
+        [string]$HelpText = 'Use ↑/↓ to move, Enter to select. Esc/← to go back.'
+    )
+
+    $menuItems = foreach ($item in $Items) {
+        if ($item -is [string]) {
+            [pscustomobject]@{ Text = $item; Value = $item }
+            continue
+        }
+
+        $textProp = $item.PSObject.Properties['Text']
+        $labelProp = $item.PSObject.Properties['Label']
+        $valueProp = $item.PSObject.Properties['Value']
+
+        $text = if ($null -ne $textProp) { [string]$textProp.Value } elseif ($null -ne $labelProp) { [string]$labelProp.Value } else { [string]$item }
+        $value = if ($null -ne $valueProp) { $valueProp.Value } else { $item }
+
+        [pscustomobject]@{ Text = $text; Value = $value }
+    }
+
+    if (-not $menuItems -or $menuItems.Count -lt 1) {
+        return $null
+    }
+
+    $selectedIndex = [Math]::Max(0, [Math]::Min($DefaultIndex, $menuItems.Count - 1))
+    $numberBuffer = ''
+    $lastDigitAt = [datetime]::MinValue
+
+    $arrowSupported = ($null -ne $Host) -and ($null -ne $Host.UI) -and ($null -ne $Host.UI.RawUI)
+    if (-not $arrowSupported) {
+        Show-Header
+        Write-Section $SectionTitle
+        Write-Host $HelpText -ForegroundColor DarkGray
+        Write-Host ''
+
+        for ($i = 0; $i -lt $menuItems.Count; $i++) {
+            Write-Host ('{0}. {1}' -f ($i + 1), $menuItems[$i].Text)
+        }
+
+        $pick = Read-Host 'Enter number'
+        if ($pick -notmatch '^[0-9]+$') { return $null }
+        $idx = [int]$pick - 1
+        if ($idx -lt 0 -or $idx -ge $menuItems.Count) { return $null }
+        return $menuItems[$idx].Value
+    }
+
+    while ($true) {
+        Show-Header
+        Write-Section $SectionTitle
+        if (-not [string]::IsNullOrWhiteSpace($HelpText)) {
+            Write-Host $HelpText -ForegroundColor DarkGray
+        }
+        if (-not [string]::IsNullOrWhiteSpace($numberBuffer)) {
+            Write-Host ("Number: {0}" -f $numberBuffer) -ForegroundColor DarkGray
+        }
+        Write-Host ''
+
+        for ($i = 0; $i -lt $menuItems.Count; $i++) {
+            $line = ('{0}. {1}' -f ($i + 1), $menuItems[$i].Text)
+            if ($i -eq $selectedIndex) {
+                Write-Host (" > {0}" -f $line) -ForegroundColor Black -BackgroundColor Gray
+            }
+            else {
+                Write-Host ("   {0}" -f $line)
+            }
+        }
+
+        try {
+            $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        }
+        catch {
+            # Fall back to numbered selection if the host doesn't support ReadKey reliably.
+            Show-Header
+            Write-Section $SectionTitle
+            Write-Host $HelpText -ForegroundColor DarkGray
+            Write-Host ''
+
+            for ($i = 0; $i -lt $menuItems.Count; $i++) {
+                Write-Host ('{0}. {1}' -f ($i + 1), $menuItems[$i].Text)
+            }
+
+            $pick = Read-Host 'Enter number'
+            if ($pick -notmatch '^[0-9]+$') { return $null }
+            $idx = [int]$pick - 1
+            if ($idx -lt 0 -or $idx -ge $menuItems.Count) { return $null }
+            return $menuItems[$idx].Value
+        }
+        switch ($key.Key) {
+            'UpArrow' {
+                $selectedIndex = ($selectedIndex - 1)
+                if ($selectedIndex -lt 0) { $selectedIndex = $menuItems.Count - 1 }
+                $numberBuffer = ''
+            }
+            'DownArrow' {
+                $selectedIndex = ($selectedIndex + 1)
+                if ($selectedIndex -ge $menuItems.Count) { $selectedIndex = 0 }
+                $numberBuffer = ''
+            }
+            'PageUp' {
+                $selectedIndex = [Math]::Max(0, $selectedIndex - 10)
+                $numberBuffer = ''
+            }
+            'PageDown' {
+                $selectedIndex = [Math]::Min($menuItems.Count - 1, $selectedIndex + 10)
+                $numberBuffer = ''
+            }
+            'Home' {
+                $selectedIndex = 0
+                $numberBuffer = ''
+            }
+            'End' {
+                $selectedIndex = $menuItems.Count - 1
+                $numberBuffer = ''
+            }
+            'LeftArrow' {
+                return $null
+            }
+            'Escape' {
+                return $null
+            }
+            'Backspace' {
+                if ($numberBuffer.Length -gt 0) {
+                    $numberBuffer = $numberBuffer.Substring(0, $numberBuffer.Length - 1)
+                }
+            }
+            'Enter' {
+                if (-not [string]::IsNullOrWhiteSpace($numberBuffer) -and $numberBuffer -match '^[0-9]+$') {
+                    $idx = [int]$numberBuffer - 1
+                    if ($idx -ge 0 -and $idx -lt $menuItems.Count) {
+                        return $menuItems[$idx].Value
+                    }
+                    $numberBuffer = ''
+                    continue
+                }
+                return $menuItems[$selectedIndex].Value
+            }
+            default {
+                $ch = $key.Character
+                if ($ch -match '^[0-9]$') {
+                    $now = Get-Date
+                    if (($now - $lastDigitAt).TotalSeconds -gt 1.2) {
+                        $numberBuffer = ''
+                    }
+                    $lastDigitAt = $now
+                    $numberBuffer += [string]$ch
+
+                    if ($numberBuffer -match '^[0-9]+$') {
+                        $idx = [int]$numberBuffer - 1
+                        if ($idx -ge 0 -and $idx -lt $menuItems.Count) {
+                            $selectedIndex = $idx
+                        }
+                    }
+                }
+                else {
+                    $numberBuffer = ''
+                }
+            }
+        }
+    }
 }
 
 function Confirm-Action {
@@ -1214,42 +1419,46 @@ function Get-ServiceDetails {
 }
 
 function Invoke-CommonServiceQuickActions {
-    Show-Header
-    Write-Section 'Common Service Quick Actions'
-    Write-Host '1. Restart Spooler'
-    Write-Host '2. Restart wuauserv'
-    Write-Host '3. Restart BITS'
-    Write-Host '4. Query Spooler'
-    Write-Host '5. Query wuauserv'
-    Write-Host '0. Back'
+    $picked = Select-ArrowMenuItem -SectionTitle 'Common Service Quick Actions' -Items @(
+        [pscustomobject]@{ Text = 'Restart Spooler'; Value = 'Restart Spooler' }
+        [pscustomobject]@{ Text = 'Restart wuauserv'; Value = 'Restart wuauserv' }
+        [pscustomobject]@{ Text = 'Restart BITS'; Value = 'Restart BITS' }
+        [pscustomobject]@{ Text = 'Query Spooler'; Value = 'Query Spooler' }
+        [pscustomobject]@{ Text = 'Query wuauserv'; Value = 'Query wuauserv' }
+        [pscustomobject]@{ Text = 'Back'; Value = $null }
+    )
 
-    $choice = Read-Host 'Select option'
-    switch ($choice.ToUpperInvariant()) {
-        '1' {
+    if ($null -eq $picked) { return }
+
+    Show-Header
+    Write-Section ("Executing: {0}" -f $picked)
+
+    switch ($picked) {
+        'Restart Spooler' {
             Show-AdminHint -Action 'Restart Spooler'
             if (Confirm-Action -Prompt 'Restart Spooler service') {
                 Invoke-Safe -ActionName 'Restart Spooler' -ScriptBlock { Restart-Service -Name spooler -Force -ErrorAction Stop }
                 Save-TextReport -Prefix 'Services_QuickAction' -Text 'Restarted service: spooler' | Out-Null
             }
         }
-        '2' {
+        'Restart wuauserv' {
             Show-AdminHint -Action 'Restart wuauserv'
             if (Confirm-Action -Prompt 'Restart wuauserv service') {
                 Invoke-Safe -ActionName 'Restart wuauserv' -ScriptBlock { Restart-Service -Name wuauserv -Force -ErrorAction Stop }
                 Save-TextReport -Prefix 'Services_QuickAction' -Text 'Restarted service: wuauserv' | Out-Null
             }
         }
-        '3' {
+        'Restart BITS' {
             Show-AdminHint -Action 'Restart BITS'
             if (Confirm-Action -Prompt 'Restart BITS service') {
                 Invoke-Safe -ActionName 'Restart BITS' -ScriptBlock { Restart-Service -Name bits -Force -ErrorAction Stop }
                 Save-TextReport -Prefix 'Services_QuickAction' -Text 'Restarted service: BITS' | Out-Null
             }
         }
-        '4' {
+        'Query Spooler' {
             Invoke-Safe -ActionName 'Query Spooler' -ScriptBlock { Get-Service -Name spooler | Format-List * }
         }
-        '5' {
+        'Query wuauserv' {
             Invoke-Safe -ActionName 'Query wuauserv' -ScriptBlock { Get-Service -Name wuauserv | Format-List * }
         }
         default { }
@@ -1270,32 +1479,36 @@ function Invoke-FullTriageReport {
 }
 
 function Invoke-CategoryOnlyReport {
-    Show-Header
-    Write-Section 'Category-Only Report Runner'
-    Write-Host '1. System'
-    Write-Host '2. Network'
-    Write-Host '3. File System'
-    Write-Host '4. Users'
-    Write-Host '5. Security'
-    Write-Host '6. Services'
-    Write-Host '0. Back'
+    $picked = Select-ArrowMenuItem -SectionTitle 'Category-Only Report Runner' -Items @(
+        [pscustomobject]@{ Text = 'System'; Value = 'System' }
+        [pscustomobject]@{ Text = 'Network'; Value = 'Network' }
+        [pscustomobject]@{ Text = 'File System'; Value = 'File System' }
+        [pscustomobject]@{ Text = 'Users'; Value = 'Users' }
+        [pscustomobject]@{ Text = 'Security'; Value = 'Security' }
+        [pscustomobject]@{ Text = 'Services'; Value = 'Services' }
+        [pscustomobject]@{ Text = 'Back'; Value = $null }
+    )
 
-    $choice = Read-Host 'Select category'
-    switch ($choice.ToUpperInvariant()) {
-        '1' { Invoke-FullSystemAudit }
-        '2' {
+    if ($null -eq $picked) { return }
+
+    Show-Header
+    Write-Section ("Executing: {0}" -f $picked)
+
+    switch ($picked) {
+        'System' { Invoke-FullSystemAudit }
+        'Network' {
             Get-IPConfiguration
             Get-AdapterSummary
             Get-RouteTable
             Get-ActiveTcpConnections
         }
-        '3' {
+        'File System' {
             Get-DriveFreeSpaceSummary
             Get-RecentFilesListing
         }
-        '4' { Invoke-QuickUserAudit }
-        '5' { Invoke-SecuritySnapshot }
-        '6' {
+        'Users' { Invoke-QuickUserAudit }
+        'Security' { Invoke-SecuritySnapshot }
+        'Services' {
             Get-ServicesList
             Get-ServicesByState
         }
@@ -1458,131 +1671,125 @@ function Copy-TextToClipboardHelper {
         return
     }
 
-    Write-Section 'Select Report to Copy to Clipboard'
-    for ($i = 0; $i -lt $recent.Count; $i++) {
-        Write-Host ('{0}. {1}' -f ($i + 1), $recent[$i].Name)
+    $items = @()
+    foreach ($r in $recent) {
+        $items += [pscustomobject]@{ Text = $r.Name; Value = $r }
     }
+    $items += [pscustomobject]@{ Text = 'Cancel'; Value = $null }
 
-    $pick = Read-Host 'Enter number'
-    if ($pick -notmatch '^[0-9]+$') {
-        Write-Status -Level Warn -Message 'Invalid selection.'
-        return
-    }
+    $picked = Select-ArrowMenuItem -SectionTitle 'Select Report to Copy to Clipboard' -Items $items -DefaultIndex 0 -HelpText 'Use ↑/↓ then Enter. Esc/← to cancel.'
+    if ($null -eq $picked) { return }
 
-    $idx = [int]$pick - 1
-    if ($idx -lt 0 -or $idx -ge $recent.Count) {
-        Write-Status -Level Warn -Message 'Selection out of range.'
-        return
-    }
-
-    $content = Get-Content -Path $recent[$idx].FullName -Raw -ErrorAction SilentlyContinue
+    $content = Get-Content -Path $picked.FullName -Raw -ErrorAction SilentlyContinue
     Set-Clipboard -Value $content
-    Write-Status -Level Success -Message ("Copied report to clipboard: {0}" -f $recent[$idx].Name)
+    Write-Status -Level Success -Message ("Copied report to clipboard: {0}" -f $picked.Name)
 }
 
 function Invoke-BuiltInToolsMenu {
-    Show-Header
-    Write-Section 'Built-in Windows Tools'
-    Write-Host '1. msinfo32'
-    Write-Host '2. eventvwr'
-    Write-Host '3. devmgmt.msc'
-    Write-Host '4. services.msc'
-    Write-Host '5. ncpa.cpl'
-    Write-Host '6. compmgmt.msc'
-    Write-Host '0. Back'
+    $picked = Select-ArrowMenuItem -SectionTitle 'Built-in Windows Tools' -Items @(
+        [pscustomobject]@{ Text = 'msinfo32'; Value = 'msinfo32' }
+        [pscustomobject]@{ Text = 'eventvwr'; Value = 'eventvwr' }
+        [pscustomobject]@{ Text = 'devmgmt.msc'; Value = 'devmgmt.msc' }
+        [pscustomobject]@{ Text = 'services.msc'; Value = 'services.msc' }
+        [pscustomobject]@{ Text = 'ncpa.cpl'; Value = 'ncpa.cpl' }
+        [pscustomobject]@{ Text = 'compmgmt.msc'; Value = 'compmgmt.msc' }
+        [pscustomobject]@{ Text = 'Back'; Value = $null }
+    )
 
-    $choice = Read-Host 'Select tool'
-    switch ($choice.ToUpperInvariant()) {
-        '1' { Start-Process msinfo32 }
-        '2' { Start-Process eventvwr }
-        '3' { Start-Process devmgmt.msc }
-        '4' { Start-Process services.msc }
-        '5' { Start-Process ncpa.cpl }
-        '6' { Start-Process compmgmt.msc }
-        default { }
-    }
+    if ($null -eq $picked) { return }
+    Show-Header
+    Write-Section ("Launching: {0}" -f $picked)
+    Start-Process $picked
 }
 
 $Script:MenuActions = [ordered]@{
     'System' = @(
-        @{ Label='Full system audit'; Handler='Invoke-FullSystemAudit' },
-        @{ Label='Basic hardware info'; Handler='Get-BasicHardwareInfo' },
-        @{ Label='OS info'; Handler='Get-OSInfo' },
-        @{ Label='CPU info'; Handler='Get-CPUInfo' },
-        @{ Label='RAM info'; Handler='Get-RAMInfo' },
-        @{ Label='Disk info'; Handler='Get-DiskInfo' },
-        @{ Label='Top processes by CPU/RAM'; Handler='Get-TopProcesses' },
-        @{ Label='Installed software inventory'; Handler='Get-InstalledSoftwareInventory' },
-        @{ Label='Installed Windows updates/hotfixes'; Handler='Get-HotfixInventory' },
-        @{ Label='Event log errors from last 24 hours'; Handler='Get-EventLogErrors24h' },
-        @{ Label='Startup entries audit'; Handler='Get-StartupEntriesAudit' },
-        @{ Label='Scheduled tasks summary'; Handler='Get-ScheduledTasksSummary' },
-        @{ Label='Environment info'; Handler='Get-EnvironmentInfo' },
-        @{ Label='System uptime'; Handler='Get-SystemUptime' }
+        @{ Label='Full system audit'; Handler='Invoke-FullSystemAudit'; Flag='sys-audit-full' },
+        @{ Label='Basic hardware info'; Handler='Get-BasicHardwareInfo'; Flag='sys-hw-basic' },
+        @{ Label='OS info'; Handler='Get-OSInfo'; Flag='sys-os-info' },
+        @{ Label='CPU info'; Handler='Get-CPUInfo'; Flag='sys-cpu-info' },
+        @{ Label='RAM info'; Handler='Get-RAMInfo'; Flag='sys-ram-info' },
+        @{ Label='Disk info'; Handler='Get-DiskInfo'; Flag='sys-disk-info' },
+        @{ Label='Top processes by CPU/RAM'; Handler='Get-TopProcesses'; Flag='sys-top-procs' },
+        @{ Label='Installed software inventory'; Handler='Get-InstalledSoftwareInventory'; Flag='sys-software' },
+        @{ Label='Installed Windows updates/hotfixes'; Handler='Get-HotfixInventory'; Flag='sys-hotfixes' },
+        @{ Label='Event log errors from last 24 hours'; Handler='Get-EventLogErrors24h'; Flag='sys-event-errors24h' },
+        @{ Label='Startup entries audit'; Handler='Get-StartupEntriesAudit'; Flag='sys-startup-audit' },
+        @{ Label='Scheduled tasks summary'; Handler='Get-ScheduledTasksSummary'; Flag='sys-tasks' },
+        @{ Label='Environment info'; Handler='Get-EnvironmentInfo'; Flag='sys-env' },
+        @{ Label='System uptime'; Handler='Get-SystemUptime'; Flag='sys-uptime' }
     )
     'Network' = @(
-        @{ Label='IP configuration'; Handler='Get-IPConfiguration' },
-        @{ Label='Adapter summary'; Handler='Get-AdapterSummary' },
-        @{ Label='ARP table'; Handler='Get-ArpTable' },
-        @{ Label='Neighbor table'; Handler='Get-NeighborTable' },
-        @{ Label='Route table'; Handler='Get-RouteTable' },
-        @{ Label='DNS resolution test'; Handler='Invoke-DnsResolutionTest' },
-        @{ Label='Ping test'; Handler='Invoke-PingTest' },
-        @{ Label='Open/listening ports'; Handler='Get-ListeningPorts' },
-        @{ Label='Active TCP connections'; Handler='Get-ActiveTcpConnections' },
-        @{ Label='Network reset option'; Handler='Invoke-NetworkReset' },
-        @{ Label='Local shares and mapped drives'; Handler='Get-LocalSharesAndMappedDrives' },
-        @{ Label='Wi-Fi profile list'; Handler='Get-WifiProfiles' },
-        @{ Label='Traceroute option'; Handler='Invoke-Traceroute' },
-        @{ Label='nslookup helper'; Handler='Invoke-NslookupHelper' }
+        @{ Label='IP configuration'; Handler='Get-IPConfiguration'; Flag='net-ipconfig' },
+        @{ Label='Adapter summary'; Handler='Get-AdapterSummary'; Flag='net-adapters' },
+        @{ Label='ARP table'; Handler='Get-ArpTable'; Flag='net-arp' },
+        @{ Label='Neighbor table'; Handler='Get-NeighborTable'; Flag='net-neighbor' },
+        @{ Label='Route table'; Handler='Get-RouteTable'; Flag='net-route' },
+        @{ Label='DNS resolution test'; Handler='Invoke-DnsResolutionTest'; Flag='net-dns-test' },
+        @{ Label='Ping test'; Handler='Invoke-PingTest'; Flag='net-ping' },
+        @{ Label='Open/listening ports'; Handler='Get-ListeningPorts'; Flag='net-ports' },
+        @{ Label='Active TCP connections'; Handler='Get-ActiveTcpConnections'; Flag='net-tcp' },
+        @{ Label='Network reset option'; Handler='Invoke-NetworkReset'; Flag='net-reset' },
+        @{ Label='Local shares and mapped drives'; Handler='Get-LocalSharesAndMappedDrives'; Flag='net-shares' },
+        @{ Label='Wi-Fi profile list'; Handler='Get-WifiProfiles'; Flag='net-wifi-profiles' },
+        @{ Label='Traceroute option'; Handler='Invoke-Traceroute'; Flag='net-traceroute' },
+        @{ Label='nslookup helper'; Handler='Invoke-NslookupHelper'; Flag='net-nslookup' }
     )
     'File System' = @(
-        @{ Label='User data backup (common + custom paths)'; Handler='Invoke-UserDataBackup' },
-        @{ Label='Recursive file search by pattern'; Handler='Invoke-RecursiveFileSearch' },
-        @{ Label='Temp cleanup'; Handler='Invoke-TempCleanup' },
-        @{ Label='Large files finder'; Handler='Find-LargeFiles' },
-        @{ Label='Recent files listing'; Handler='Get-RecentFilesListing' },
-        @{ Label='Export directory tree to text'; Handler='Export-DirectoryTree' },
-        @{ Label='Drive free space summary'; Handler='Get-DriveFreeSpaceSummary' },
-        @{ Label='Duplicate candidate finder (filename only)'; Handler='Find-DuplicateFileNameCandidates' },
-        @{ Label='User-selected path report'; Handler='Invoke-PathReport' }
+        @{ Label='User data backup (common + custom paths)'; Handler='Invoke-UserDataBackup'; Flag='fs-backup-userdata' },
+        @{ Label='Recursive file search by pattern'; Handler='Invoke-RecursiveFileSearch'; Flag='fs-search' },
+        @{ Label='Temp cleanup'; Handler='Invoke-TempCleanup'; Flag='fs-temp-clean' },
+        @{ Label='Large files finder'; Handler='Find-LargeFiles'; Flag='fs-large-files' },
+        @{ Label='Recent files listing'; Handler='Get-RecentFilesListing'; Flag='fs-recent-files' },
+        @{ Label='Export directory tree to text'; Handler='Export-DirectoryTree'; Flag='fs-tree-export' },
+        @{ Label='Drive free space summary'; Handler='Get-DriveFreeSpaceSummary'; Flag='fs-drive-space' },
+        @{ Label='Duplicate candidate finder (filename only)'; Handler='Find-DuplicateFileNameCandidates'; Flag='fs-dupe-names' },
+        @{ Label='User-selected path report'; Handler='Invoke-PathReport'; Flag='fs-path-report' }
     )
     'Users' = @(
-        @{ Label='Local users'; Handler='Get-LocalUsersList' },
-        @{ Label='Administrators group members'; Handler='Get-AdministratorsGroupMembers' },
-        @{ Label='Last logon info where available'; Handler='Get-LastLogonInfo' },
-        @{ Label='Profile folder listing'; Handler='Get-ProfileFolderListing' },
-        @{ Label='Quick user/account audit report'; Handler='Invoke-QuickUserAudit' }
+        @{ Label='Local users'; Handler='Get-LocalUsersList'; Flag='usr-local' },
+        @{ Label='Administrators group members'; Handler='Get-AdministratorsGroupMembers'; Flag='usr-admins' },
+        @{ Label='Last logon info where available'; Handler='Get-LastLogonInfo'; Flag='usr-last-logon' },
+        @{ Label='Profile folder listing'; Handler='Get-ProfileFolderListing'; Flag='usr-profile-folders' },
+        @{ Label='Quick user/account audit report'; Handler='Invoke-QuickUserAudit'; Flag='usr-audit-quick' }
     )
     'Security' = @(
-        @{ Label='BitLocker status'; Handler='Get-BitLockerStatus' },
-        @{ Label='Firewall profile status'; Handler='Get-FirewallStatus' },
-        @{ Label='Defender status'; Handler='Get-DefenderStatus' },
-        @{ Label='Suspicious startup/persistence checks'; Handler='Get-SuspiciousPersistenceCheck' },
-        @{ Label='Quick security posture snapshot'; Handler='Invoke-SecuritySnapshot' }
+        @{ Label='BitLocker status'; Handler='Get-BitLockerStatus'; Flag='sec-bitlocker' },
+        @{ Label='Firewall profile status'; Handler='Get-FirewallStatus'; Flag='sec-firewall' },
+        @{ Label='Defender status'; Handler='Get-DefenderStatus'; Flag='sec-defender' },
+        @{ Label='Suspicious startup/persistence checks'; Handler='Get-SuspiciousPersistenceCheck'; Flag='sec-persistence' },
+        @{ Label='Quick security posture snapshot'; Handler='Invoke-SecuritySnapshot'; Flag='sec-snapshot' }
     )
     'Services' = @(
-        @{ Label='List services'; Handler='Get-ServicesList' },
-        @{ Label='Filter services by running/stopped'; Handler='Get-ServicesByState' },
-        @{ Label='Restart selected service by name'; Handler='Restart-ServiceByName' },
-        @{ Label='Query service details'; Handler='Get-ServiceDetails' },
-        @{ Label='Common service quick actions (spooler/wuauserv/BITS)'; Handler='Invoke-CommonServiceQuickActions' }
+        @{ Label='List services'; Handler='Get-ServicesList'; Flag='svc-list' },
+        @{ Label='Filter services by running/stopped'; Handler='Get-ServicesByState'; Flag='svc-by-state' },
+        @{ Label='Restart selected service by name'; Handler='Restart-ServiceByName'; Flag='svc-restart' },
+        @{ Label='Query service details'; Handler='Get-ServiceDetails'; Flag='svc-details' },
+        @{ Label='Common service quick actions (spooler/wuauserv/BITS)'; Handler='Invoke-CommonServiceQuickActions'; Flag='svc-common-actions' }
     )
     'Reports' = @(
-        @{ Label='Run full triage report'; Handler='Invoke-FullTriageReport' },
-        @{ Label='Run category-only reports'; Handler='Invoke-CategoryOnlyReport' },
-        @{ Label='Export combined summary report'; Handler='Export-CombinedSummaryReport' },
-        @{ Label='Open reports folder'; Handler='Open-ReportsFolder' },
-        @{ Label='Display last generated reports'; Handler='Show-LastReports' },
-        @{ Label='Create technician note file'; Handler='New-TechnicianNote' }
+        @{ Label='Run full triage report'; Handler='Invoke-FullTriageReport'; Flag='rpt-triage-full' },
+        @{ Label='Run category-only reports'; Handler='Invoke-CategoryOnlyReport'; Flag='rpt-category-only' },
+        @{ Label='Export combined summary report'; Handler='Export-CombinedSummaryReport'; Flag='rpt-export-summary' },
+        @{ Label='Open reports folder'; Handler='Open-ReportsFolder'; Flag='rpt-open-folder' },
+        @{ Label='Display last generated reports'; Handler='Show-LastReports'; Flag='rpt-last' },
+        @{ Label='Create technician note file'; Handler='New-TechnicianNote'; Flag='rpt-tech-note' }
     )
     'Tools/Utilities' = @(
-        @{ Label='Process kill by PID'; Handler='Stop-ProcessByPID' },
-        @{ Label='Driver export using DISM'; Handler='Export-DriversWithDism' },
-        @{ Label='Hostname and serial summary'; Handler='Get-HostnameSerialSummary' },
-        @{ Label='Clipboard-safe plain-text output helper'; Handler='Copy-TextToClipboardHelper' },
-        @{ Label='Launch built-in Windows tools'; Handler='Invoke-BuiltInToolsMenu' }
+        @{ Label='Process kill by PID'; Handler='Stop-ProcessByPID'; Flag='tool-kill-pid' },
+        @{ Label='Driver export using DISM'; Handler='Export-DriversWithDism'; Flag='tool-driver-export' },
+        @{ Label='Hostname and serial summary'; Handler='Get-HostnameSerialSummary'; Flag='tool-host-serial' },
+        @{ Label='Clipboard-safe plain-text output helper'; Handler='Copy-TextToClipboardHelper'; Flag='tool-clipboard-text' },
+        @{ Label='Launch built-in Windows tools'; Handler='Invoke-BuiltInToolsMenu'; Flag='tool-windows-tools' }
     )
+}
+
+function Get-NormalizedFlag {
+    param([AllowNull()][string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $text = $Value.Trim()
+    while ($text.StartsWith('-')) { $text = $text.Substring(1) }
+    return $text.ToLowerInvariant()
 }
 
 function Get-AllActions {
@@ -1593,10 +1800,48 @@ function Get-AllActions {
                 Category = $category
                 Label    = $item.Label
                 Handler  = $item.Handler
+                Flag     = $item.Flag
             })
         }
     }
     return $all
+}
+
+function Test-MenuFlagsUnique {
+    $all = Get-AllActions
+    $seen = @{}
+    foreach ($a in $all) {
+        $norm = Get-NormalizedFlag -Value $a.Flag
+        if ([string]::IsNullOrWhiteSpace($norm)) {
+            throw "Menu action missing Flag: [$($a.Category)] $($a.Label)"
+        }
+        if ($seen.ContainsKey($norm)) {
+            $prev = $seen[$norm]
+            throw "Duplicate Flag '$norm': [$($prev.Category)] $($prev.Label) and [$($a.Category)] $($a.Label)"
+        }
+        $seen[$norm] = $a
+    }
+}
+
+function Find-ActionByFlag {
+    param([Parameter(Mandatory)][string]$Flag)
+    $target = Get-NormalizedFlag -Value $Flag
+    foreach ($a in (Get-AllActions)) {
+        if ((Get-NormalizedFlag -Value $a.Flag) -eq $target) { return $a }
+    }
+    return $null
+}
+
+function Show-GroupedFlags {
+    foreach ($category in $Script:MenuActions.Keys) {
+        Write-Host ''
+        Write-Host ('[{0}]' -f $category) -ForegroundColor Cyan
+        foreach ($item in $Script:MenuActions[$category]) {
+            Write-Host ('  {0,-22} {1}' -f $item.Flag, $item.Label)
+        }
+    }
+    Write-Host ''
+    Write-Host "Use: -Flag <flag> [-ReportName <name>]" -ForegroundColor DarkGray
 }
 
 function Invoke-ActionHandler {
@@ -1617,49 +1862,32 @@ function Show-CategoryMenu {
     param([Parameter(Mandatory)][string]$Category)
 
     while ($true) {
-        Show-Header
-        Write-Section "$Category Menu"
-
         $actions = if ($Category -eq 'All') { Get-AllActions } else {
             $Script:MenuActions[$Category] | ForEach-Object {
                 [pscustomobject]@{
                     Category = $Category
                     Label    = $_.Label
                     Handler  = $_.Handler
+                    Flag     = $_.Flag
                 }
             }
         }
 
-        for ($i = 0; $i -lt $actions.Count; $i++) {
-            if ($Category -eq 'All') {
-                Write-Host ('{0}. [{1}] {2}' -f ($i + 1), $actions[$i].Category, $actions[$i].Label)
+        $items = @()
+        foreach ($a in $actions) {
+            $text = if ($Category -eq 'All') {
+                ('[{0}] {1} ({2})' -f $a.Category, $a.Label, $a.Flag)
             }
             else {
-                Write-Host ('{0}. {1}' -f ($i + 1), $actions[$i].Label)
+                ('{0} ({1})' -f $a.Label, $a.Flag)
             }
+            $items += [pscustomobject]@{ Text = $text; Value = $a }
         }
+        $items += [pscustomobject]@{ Text = 'Back'; Value = $null }
 
-        Write-Host '0. Back'
-        $choice = Read-Host 'Select action'
+        $selected = Select-ArrowMenuItem -SectionTitle "$Category Menu" -Items $items -DefaultIndex 0
+        if ($null -eq $selected) { return }
 
-        if ($choice -eq '0') {
-            return
-        }
-
-        if ($choice -notmatch '^[0-9]+$') {
-            Write-Status -Level Warn -Message 'Invalid selection.'
-            Pause-Toolkit
-            continue
-        }
-
-        $index = [int]$choice - 1
-        if ($index -lt 0 -or $index -ge $actions.Count) {
-            Write-Status -Level Warn -Message 'Selection out of range.'
-            Pause-Toolkit
-            continue
-        }
-
-        $selected = $actions[$index]
         Show-Header
         Write-Section ("Executing: {0}" -f $selected.Label)
         Invoke-ActionHandler -Handler $selected.Handler -Label $selected.Label
@@ -1669,37 +1897,44 @@ function Show-CategoryMenu {
 
 function Show-MainMenu {
     while ($true) {
-        Show-Header
-        Write-Section 'Main Category Menu'
-        Write-Host '1. All'
-        Write-Host '2. System'
-        Write-Host '3. Network'
-        Write-Host '4. File System'
-        Write-Host '5. Users'
-        Write-Host '6. Security'
-        Write-Host '7. Services'
-        Write-Host '8. Reports'
-        Write-Host '9. Tools/Utilities'
-        Write-Host 'X. Exit'
+        $picked = Select-ArrowMenuItem -SectionTitle 'Main Category Menu' -Items @(
+            [pscustomobject]@{ Text = 'All'; Value = 'All' }
+            [pscustomobject]@{ Text = 'System'; Value = 'System' }
+            [pscustomobject]@{ Text = 'Network'; Value = 'Network' }
+            [pscustomobject]@{ Text = 'File System'; Value = 'File System' }
+            [pscustomobject]@{ Text = 'Users'; Value = 'Users' }
+            [pscustomobject]@{ Text = 'Security'; Value = 'Security' }
+            [pscustomobject]@{ Text = 'Services'; Value = 'Services' }
+            [pscustomobject]@{ Text = 'Reports'; Value = 'Reports' }
+            [pscustomobject]@{ Text = 'Tools/Utilities'; Value = 'Tools/Utilities' }
+            [pscustomobject]@{ Text = 'Exit'; Value = '__EXIT__' }
+        ) -DefaultIndex 0 -HelpText 'Use ↑/↓ then Enter. Esc/← exits.'
 
-        $choice = Read-Host 'Select category'
-        switch ($choice.ToUpperInvariant()) {
-            '1' { Show-CategoryMenu -Category 'All' }
-            '2' { Show-CategoryMenu -Category 'System' }
-            '3' { Show-CategoryMenu -Category 'Network' }
-            '4' { Show-CategoryMenu -Category 'File System' }
-            '5' { Show-CategoryMenu -Category 'Users' }
-            '6' { Show-CategoryMenu -Category 'Security' }
-            '7' { Show-CategoryMenu -Category 'Services' }
-            '8' { Show-CategoryMenu -Category 'Reports' }
-            '9' { Show-CategoryMenu -Category 'Tools/Utilities' }
-            'X' { return }
-            default {
-                Write-Status -Level Warn -Message 'Unknown selection.'
-                Pause-Toolkit
-            }
-        }
+        if ($null -eq $picked -or $picked -eq '__EXIT__') { return }
+        Show-CategoryMenu -Category $picked
     }
+}
+
+Test-MenuFlagsUnique
+
+if ($ListFlags) {
+    Show-GroupedFlags
+    return
+}
+
+if (-not [string]::IsNullOrWhiteSpace($Flag)) {
+    Initialize-ReportSession -Name $ReportName -NonInteractive
+    $action = Find-ActionByFlag -Flag $Flag
+    if ($null -eq $action) {
+        Write-Status -Level Error -Message "Unknown flag: $Flag"
+        Show-GroupedFlags
+        return
+    }
+
+    Show-Header
+    Write-Section ("Executing: {0}" -f $action.Label)
+    Invoke-ActionHandler -Handler $action.Handler -Label $action.Label
+    return
 }
 
 Initialize-ReportSession
