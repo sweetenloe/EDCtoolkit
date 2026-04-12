@@ -38,4 +38,4 @@ The GUI can also export a combined report to a file you choose.
 - Run as Administrator for the most complete results and fix actions.
 - The GUI is non-interactive for scan checks (no hidden terminal prompts).
 
-![Hardy the HDD](hardy-the-hdd%20(2).png)
+<img src="Scripts/EDCtoolkit/hardy-the-hdd.png"
