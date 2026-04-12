@@ -1971,25 +1971,32 @@ function Show-MainMenu {
 
 Test-MenuFlagsUnique
 
-if ($ListFlags) {
-    Show-GroupedFlags
-    return
-}
-
-if (-not [string]::IsNullOrWhiteSpace($Flag)) {
-    Initialize-ReportSession -Name $ReportName -NonInteractive
-    $action = Find-ActionByFlag -Flag $Flag
-    if ($null -eq $action) {
-        Write-Status -Level Error -Message "Unknown flag: $Flag"
+function Invoke-EDCtoolkitConsole {
+    if ($ListFlags) {
         Show-GroupedFlags
         return
     }
 
-    Show-Header
-    Write-Section ("Executing: {0}" -f $action.Label)
-    Invoke-ActionHandler -Handler $action.Handler -Label $action.Label
-    return
+    if (-not [string]::IsNullOrWhiteSpace($Flag)) {
+        Initialize-ReportSession -Name $ReportName -NonInteractive
+        $action = Find-ActionByFlag -Flag $Flag
+        if ($null -eq $action) {
+            Write-Status -Level Error -Message "Unknown flag: $Flag"
+            Show-GroupedFlags
+            return
+        }
+
+        Show-Header
+        Write-Section ("Executing: {0}" -f $action.Label)
+        Invoke-ActionHandler -Handler $action.Handler -Label $action.Label
+        return
+    }
+
+    Initialize-ReportSession
+    Show-MainMenu
 }
 
-Initialize-ReportSession
-Show-MainMenu
+# If the toolkit script is dot-sourced (imported), avoid starting the interactive console UI.
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-EDCtoolkitConsole
+}
