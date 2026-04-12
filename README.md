@@ -1,5 +1,5 @@
 <div align="center"><h1> ｅｄｃｔｏｏｌｋｉｔ</h1>
-<h3><img src="Scripts/EDCtoolkit/logo-n.png" <br> <alt="EDCtoolkit logo" width="160">>PoSh toolkit for endpoint triage and troubleshooting.
+<h3><img src="logo-n.png" <br> <alt="EDCtoolkit logo" width="160">>PoSh toolkit for endpoint triage and troubleshooting.
 <br> More troubleshooting assistance coming</div></h4>
 <p align="center"></p>
 <br><br></c>
@@ -38,4 +38,4 @@ The GUI can also export a combined report to a file you choose.
 - Run as Administrator for the most complete results and fix actions.
 - The GUI is non-interactive for scan checks (no hidden terminal prompts).
 
-![Hardy the HDD](Scripts/EDCtoolkit/hardy-the-hdd%20(2).png)
+![Hardy the HDD](hardy-the-hdd%20(2).png)
