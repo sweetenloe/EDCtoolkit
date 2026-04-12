@@ -1,5 +1,5 @@
 <div align="center"><h1> ｅｄｃｔｏｏｌｋｉｔ</h1>
-<h3><img src="logo-n.png" <br> <alt="EDCtoolkit logo" width="160">>PoSh toolkit for endpoint triage and troubleshooting.
+<h3><img src="Scripts/EDCtoolkit/logo-n.png" <br> <alt="EDCtoolkit logo" width="160">>PoSh toolkit for endpoint triage and troubleshooting.
 <br> More troubleshooting assistance coming</div></h4>
 <p align="center"></p>
 <br><br></c>
