@@ -15,6 +15,9 @@ param(
     [switch]$SelfTest
     ,
     [switch]$SelfTestFast
+    ,
+    [ValidateSet('System','Dark','Light')]
+    [string]$Theme = 'System'
 )
 
 Set-StrictMode -Version Latest
@@ -26,6 +29,9 @@ Add-Type -AssemblyName System.Drawing
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
     Write-Warning 'WinForms requires STA. Re-run using Windows PowerShell (powershell.exe), not pwsh.exe.'
 }
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
 
 # -----------------------------
 # Load existing toolkit backend
@@ -184,6 +190,362 @@ function Confirm-GuiAction {
     return ($result -eq [System.Windows.Forms.DialogResult]::Yes)
 }
 
+function Get-ThemePreference {
+    param(
+        [ValidateSet('System','Dark','Light')]
+        [string]$Default = 'System'
+    )
+
+    if ($Default -eq 'Dark' -or $Default -eq 'Light') { return $Default }
+
+    try {
+        $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+        $value = Get-ItemPropertyValue -Path $key -Name 'AppsUseLightTheme' -ErrorAction Stop
+        if ([int]$value -eq 0) { return 'Dark' }
+        return 'Light'
+    }
+    catch {
+        return 'Dark'
+    }
+}
+
+function New-ThemePalette {
+    param(
+        [Parameter(Mandatory)][ValidateSet('Dark','Light')]
+        [string]$Theme
+    )
+
+    if ($Theme -eq 'Light') {
+        return @{
+            ThemeName      = 'Light'
+            FormBack       = [System.Drawing.Color]::FromArgb(245, 247, 250)
+            Surface        = [System.Drawing.Color]::White
+            SurfaceAlt     = [System.Drawing.Color]::FromArgb(237, 242, 247)
+            Border         = [System.Drawing.Color]::FromArgb(210, 214, 220)
+            Text           = [System.Drawing.Color]::FromArgb(17, 24, 39)
+            MutedText      = [System.Drawing.Color]::FromArgb(75, 85, 99)
+            InputBack      = [System.Drawing.Color]::White
+            InputText      = [System.Drawing.Color]::FromArgb(17, 24, 39)
+            ButtonBack     = [System.Drawing.Color]::FromArgb(232, 236, 241)
+            ButtonText     = [System.Drawing.Color]::FromArgb(17, 24, 39)
+            Accent         = [System.Drawing.Color]::FromArgb(37, 99, 235)
+            StatusBack     = [System.Drawing.Color]::FromArgb(248, 250, 252)
+            ListBack       = [System.Drawing.Color]::White
+            ListFore       = [System.Drawing.Color]::FromArgb(17, 24, 39)
+        }
+    }
+
+    return @{
+        ThemeName      = 'Dark'
+        FormBack       = [System.Drawing.Color]::FromArgb(18, 23, 31)
+        Surface        = [System.Drawing.Color]::FromArgb(28, 35, 46)
+        SurfaceAlt     = [System.Drawing.Color]::FromArgb(35, 43, 56)
+        Border         = [System.Drawing.Color]::FromArgb(56, 66, 82)
+        Text           = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        MutedText      = [System.Drawing.Color]::FromArgb(161, 173, 189)
+        InputBack      = [System.Drawing.Color]::FromArgb(23, 29, 39)
+        InputText      = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        ButtonBack     = [System.Drawing.Color]::FromArgb(42, 50, 64)
+        ButtonText     = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        Accent         = [System.Drawing.Color]::FromArgb(89, 168, 255)
+        StatusBack     = [System.Drawing.Color]::FromArgb(24, 31, 41)
+        ListBack       = [System.Drawing.Color]::FromArgb(23, 29, 39)
+        ListFore       = [System.Drawing.Color]::FromArgb(232, 237, 243)
+    }
+}
+
+function Set-ListViewTheme {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.ListView]$ListView,
+        [Parameter(Mandatory)][hashtable]$Palette
+    )
+
+    $ListView.BackColor = $Palette.ListBack
+    $ListView.ForeColor = $Palette.ListFore
+}
+
+function Set-RoundedButtonRegion {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.Button]$Button,
+        [int]$Radius = 14
+    )
+
+    if ($Button.Width -lt 8 -or $Button.Height -lt 8) { return }
+
+    $diameter = [math]::Max(4, ($Radius * 2))
+    $rect = New-Object System.Drawing.Rectangle(0, 0, $Button.Width, $Button.Height)
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    try {
+        $path.StartFigure()
+        $path.AddArc($rect.X, $rect.Y, $diameter, $diameter, 180, 90)
+        $path.AddArc(($rect.Right - $diameter), $rect.Y, $diameter, $diameter, 270, 90)
+        $path.AddArc(($rect.Right - $diameter), ($rect.Bottom - $diameter), $diameter, $diameter, 0, 90)
+        $path.AddArc($rect.X, ($rect.Bottom - $diameter), $diameter, $diameter, 90, 90)
+        $path.CloseFigure()
+
+        if ($Button.Region) {
+            try { $Button.Region.Dispose() } catch { }
+        }
+        $Button.Region = New-Object System.Drawing.Region($path)
+    }
+    finally {
+        $path.Dispose()
+    }
+}
+
+function Set-RichTextTheme {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.RichTextBox]$RichTextBox,
+        [Parameter(Mandatory)][hashtable]$Palette
+    )
+
+    $RichTextBox.BackColor = $Palette.InputBack
+    $RichTextBox.ForeColor = $Palette.InputText
+    $RichTextBox.BorderStyle = 'FixedSingle'
+}
+
+function Set-ComboTheme {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.ComboBox]$ComboBox,
+        [Parameter(Mandatory)][hashtable]$Palette
+    )
+
+    $ComboBox.BackColor = $Palette.InputBack
+    $ComboBox.ForeColor = $Palette.InputText
+    $ComboBox.FlatStyle = 'Flat'
+    $ComboBox.DrawMode = [System.Windows.Forms.DrawMode]::OwnerDrawFixed
+    $ComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+
+    $ComboBox.add_DrawItem({
+        param($sender, $e)
+        if ($e.Index -lt 0) { return }
+
+        $item = $sender.Items[$e.Index]
+        $text = if ($item -and $item.PSObject.Properties['Text']) { [string]$item.Text } else { [string]$item }
+        $isSelected = ($e.State -band [System.Windows.Forms.DrawItemState]::Selected) -eq [System.Windows.Forms.DrawItemState]::Selected
+        $back = if ($isSelected) { $script:Palette.Accent } else { $script:Palette.InputBack }
+        $fore = if ($isSelected) { [System.Drawing.Color]::White } else { $script:Palette.InputText }
+
+        $bg = New-Object System.Drawing.SolidBrush($back)
+        $fg = New-Object System.Drawing.SolidBrush($fore)
+        try {
+            $e.Graphics.FillRectangle($bg, $e.Bounds)
+            $textRect = New-Object System.Drawing.RectangleF(($e.Bounds.X + 6), ($e.Bounds.Y + 3), ($e.Bounds.Width - 8), ($e.Bounds.Height - 4))
+            $e.Graphics.DrawString($text, $sender.Font, $fg, $textRect)
+            $e.DrawFocusRectangle()
+        }
+        finally {
+            $bg.Dispose()
+            $fg.Dispose()
+        }
+    }.GetNewClosure())
+}
+
+function Set-TabControlTheme {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.TabControl]$TabControl,
+        [Parameter(Mandatory)][hashtable]$Palette
+    )
+
+    $TabControl.DrawMode = [System.Windows.Forms.TabDrawMode]::OwnerDrawFixed
+    $TabControl.SizeMode = [System.Windows.Forms.TabSizeMode]::Normal
+    $TabControl.Appearance = [System.Windows.Forms.TabAppearance]::Normal
+    $TabControl.Padding = New-Object System.Drawing.Point(14, 6)
+
+    $TabControl.add_DrawItem({
+        param($sender, $e)
+        if ($e.Index -lt 0) { return }
+
+        $tabPage = $sender.TabPages[$e.Index]
+        $rect = $sender.GetTabRect($e.Index)
+        $selected = ($sender.SelectedIndex -eq $e.Index)
+        $back = if ($selected) { $script:Palette.Surface } else { $script:Palette.SurfaceAlt }
+        $fore = if ($selected) { $script:Palette.Text } else { $script:Palette.MutedText }
+
+        $bg = New-Object System.Drawing.SolidBrush($back)
+        $fg = New-Object System.Drawing.SolidBrush($fore)
+        $borderPen = New-Object System.Drawing.Pen($(if ($selected) { $script:Palette.Accent } else { $script:Palette.Border }))
+        $sf = New-Object System.Drawing.StringFormat
+        try {
+            $sf.Alignment = [System.Drawing.StringAlignment]::Center
+            $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $e.Graphics.FillRectangle($bg, $rect)
+            $e.Graphics.DrawRectangle($borderPen, $rect)
+            $textRect = New-Object System.Drawing.RectangleF($rect.X, $rect.Y, $rect.Width, $rect.Height)
+            $e.Graphics.DrawString($tabPage.Text, $sender.Font, $fg, $textRect, $sf)
+        }
+        finally {
+            $bg.Dispose()
+            $fg.Dispose()
+            $borderPen.Dispose()
+            $sf.Dispose()
+        }
+    }.GetNewClosure())
+}
+
+function Set-ListViewOwnerTheme {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.ListView]$ListView,
+        [Parameter(Mandatory)][hashtable]$Palette
+    )
+
+    $ListView.OwnerDraw = $true
+    $ListView.BackColor = $Palette.ListBack
+    $ListView.ForeColor = $Palette.ListFore
+
+    $ListView.add_DrawColumnHeader({
+        param($sender, $e)
+        $bg = New-Object System.Drawing.SolidBrush($script:Palette.SurfaceAlt)
+        $fg = New-Object System.Drawing.SolidBrush($script:Palette.Text)
+        $pen = New-Object System.Drawing.Pen($script:Palette.Border)
+        $sf = New-Object System.Drawing.StringFormat
+        try {
+            $sf.Alignment = [System.Drawing.StringAlignment]::Near
+            $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $e.Graphics.FillRectangle($bg, $e.Bounds)
+            $e.Graphics.DrawRectangle($pen, $e.Bounds)
+            $textRect = New-Object System.Drawing.RectangleF(($e.Bounds.X + 6), $e.Bounds.Y, ($e.Bounds.Width - 8), $e.Bounds.Height)
+            $e.Graphics.DrawString($e.Header.Text, $sender.Font, $fg, $textRect, $sf)
+        }
+        finally {
+            $bg.Dispose()
+            $fg.Dispose()
+            $pen.Dispose()
+            $sf.Dispose()
+        }
+    }.GetNewClosure())
+
+    $ListView.add_DrawItem({
+        param($sender, $e)
+        if ($sender.View -ne [System.Windows.Forms.View]::Details) {
+            $e.DrawDefault = $true
+        }
+    }.GetNewClosure())
+
+    $ListView.add_DrawSubItem({
+        param($sender, $e)
+        $isSelected = ($e.ItemState -band [System.Windows.Forms.ListViewItemStates]::Selected) -eq [System.Windows.Forms.ListViewItemStates]::Selected
+        $rowBack = if ($isSelected) { $script:Palette.Accent } elseif (($e.ItemIndex % 2) -eq 0) { $script:Palette.ListBack } else { $script:Palette.Surface }
+        $rowFore = if ($isSelected) { [System.Drawing.Color]::White } else { $script:Palette.ListFore }
+
+        $bg = New-Object System.Drawing.SolidBrush($rowBack)
+        $fg = New-Object System.Drawing.SolidBrush($rowFore)
+        $gridPen = New-Object System.Drawing.Pen($script:Palette.Border)
+        $sf = New-Object System.Drawing.StringFormat
+        try {
+            $sf.Alignment = [System.Drawing.StringAlignment]::Near
+            $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $e.Graphics.FillRectangle($bg, $e.Bounds)
+            $e.Graphics.DrawRectangle($gridPen, $e.Bounds)
+            $textRect = New-Object System.Drawing.RectangleF(($e.Bounds.X + 6), $e.Bounds.Y, ($e.Bounds.Width - 8), $e.Bounds.Height)
+            $e.Graphics.DrawString($e.SubItem.Text, $sender.Font, $fg, $textRect, $sf)
+
+            if ($e.ColumnIndex -eq 0 -and $e.Item.ImageList -and $e.Item.ImageIndex -ge 0) {
+                $e.Item.ImageList.Draw($e.Graphics, ($e.Bounds.X + 4), ($e.Bounds.Y + 2), $e.Item.ImageIndex)
+            }
+        }
+        finally {
+            $bg.Dispose()
+            $fg.Dispose()
+            $gridPen.Dispose()
+            $sf.Dispose()
+        }
+    }.GetNewClosure())
+}
+
+function Apply-ControlTheme {
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.Control]$Control,
+        [Parameter(Mandatory)][hashtable]$Palette
+    )
+
+    if ($Control -is [System.Windows.Forms.Form]) {
+        $Control.BackColor = $Palette.FormBack
+        $Control.ForeColor = $Palette.Text
+    }
+    elseif ($Control -is [System.Windows.Forms.StatusStrip]) {
+        $Control.BackColor = $Palette.StatusBack
+        $Control.ForeColor = $Palette.Text
+    }
+    elseif ($Control -is [System.Windows.Forms.TabPage]) {
+        $Control.BackColor = $Palette.Surface
+        $Control.ForeColor = $Palette.Text
+    }
+    elseif ($Control -is [System.Windows.Forms.GroupBox]) {
+        $Control.BackColor = $Palette.Surface
+        $Control.ForeColor = $Palette.Text
+    }
+    elseif ($Control -is [System.Windows.Forms.Button]) {
+        $Control.BackColor = $Palette.ButtonBack
+        $Control.ForeColor = $Palette.ButtonText
+        $Control.FlatStyle = 'Flat'
+        $Control.FlatAppearance.BorderSize = 1
+        $Control.FlatAppearance.BorderColor = $Palette.Accent
+        $Control.FlatAppearance.MouseDownBackColor = $Palette.Accent
+        $Control.FlatAppearance.MouseOverBackColor = $Palette.SurfaceAlt
+        $Control.UseVisualStyleBackColor = $false
+        $Control.Padding = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
+        Set-RoundedButtonRegion -Button $Control -Radius 12
+        $Control.add_SizeChanged({
+            Set-RoundedButtonRegion -Button $this -Radius 12
+        }.GetNewClosure())
+    }
+    elseif ($Control -is [System.Windows.Forms.TextBox] -or $Control -is [System.Windows.Forms.ComboBox]) {
+        if ($Control -is [System.Windows.Forms.ComboBox]) {
+            Set-ComboTheme -ComboBox $Control -Palette $Palette
+        }
+        else {
+            $Control.BackColor = $Palette.InputBack
+            $Control.ForeColor = $Palette.InputText
+            $Control.BorderStyle = 'FixedSingle'
+        }
+    }
+    elseif ($Control -is [System.Windows.Forms.Label]) {
+        if ($Control.Name -eq 'SubtitleLabel') {
+            $Control.ForeColor = $Palette.MutedText
+        }
+        else {
+            $Control.ForeColor = $Palette.Text
+        }
+        if ($Control.BackColor -eq [System.Drawing.Color]::Empty) {
+            $Control.BackColor = [System.Drawing.Color]::Transparent
+        }
+    }
+    elseif ($Control -is [System.Windows.Forms.Panel] -or $Control -is [System.Windows.Forms.SplitContainer]) {
+        if ($Control.Name -eq 'SeparatorPanel') {
+            $Control.BackColor = $Palette.Border
+        }
+        elseif ($Control.Name -eq 'HeaderPanel') {
+            $Control.BackColor = $Palette.FormBack
+        }
+        else {
+            $Control.BackColor = $Palette.Surface
+            $Control.ForeColor = $Palette.Text
+        }
+    }
+    elseif ($Control -is [System.Windows.Forms.ListView]) {
+        Set-ListViewTheme -ListView $Control -Palette $Palette
+        Set-ListViewOwnerTheme -ListView $Control -Palette $Palette
+    }
+    elseif ($Control -is [System.Windows.Forms.RichTextBox]) {
+        Set-RichTextTheme -RichTextBox $Control -Palette $Palette
+    }
+    elseif ($Control -is [System.Windows.Forms.TabControl]) {
+        $Control.BackColor = $Palette.FormBack
+        $Control.ForeColor = $Palette.Text
+        Set-TabControlTheme -TabControl $Control -Palette $Palette
+    }
+    else {
+        $Control.ForeColor = $Palette.Text
+    }
+
+    foreach ($child in $Control.Controls) {
+        if ($child -is [System.Windows.Forms.Control]) {
+            Apply-ControlTheme -Control $child -Palette $Palette
+        }
+    }
+}
+
 # -----------------------------
 # Toolkit report capture helpers
 # -----------------------------
@@ -260,7 +622,15 @@ function Get-CurrentReportRoot {
         }
     }
     catch { }
-    return (Join-Path -Path $PSScriptRoot -ChildPath 'EDC_Reports')
+
+    try {
+        if (Get-Command -Name Get-DefaultReportBaseRoot -CommandType Function -ErrorAction SilentlyContinue) {
+            return (Get-DefaultReportBaseRoot)
+        }
+    }
+    catch { }
+
+    return (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'EDCtoolkit\EDC_Reports')
 }
 
 function Get-TextFilePreview {
@@ -312,6 +682,8 @@ function Sync-ReportFilesToResults {
 
 $script:PingTarget = '8.8.8.8'
 $script:DnsTarget = 'www.microsoft.com'
+$script:ResolvedTheme = Get-ThemePreference -Default $Theme
+$script:Palette = New-ThemePalette -Theme $script:ResolvedTheme
 
 function Get-SystemChecks {
     $results = New-Object System.Collections.Generic.List[object]
@@ -845,10 +1217,11 @@ function Invoke-CategoryScan {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'EDC Toolkit Beta'
-$form.Size = New-Object System.Drawing.Size(1100, 760)
+$form.Size = New-Object System.Drawing.Size(1180, 820)
 $form.StartPosition = 'CenterScreen'
-$form.BackColor = [System.Drawing.Color]::White
+$form.BackColor = $script:Palette.FormBack
 $form.KeyPreview = $true
+$form.MinimumSize = New-Object System.Drawing.Size(1180, 820)
 
 $statusStrip = New-Object System.Windows.Forms.StatusStrip
 $statusLabel = New-Object System.Windows.Forms.ToolStripStatusLabel
@@ -874,24 +1247,26 @@ $titleLabel.Size = New-Object System.Drawing.Size(420, 40)
 $form.Controls.Add($titleLabel)
 
 $subtitleLabel = New-Object System.Windows.Forms.Label
+$subtitleLabel.Name = 'SubtitleLabel'
 $subtitleLabel.Text = 'Beta GUI wrapper for endpoint triage'
 $subtitleLabel.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Regular)
-$subtitleLabel.ForeColor = [System.Drawing.Color]::FromArgb(75, 85, 99)
+$subtitleLabel.ForeColor = $script:Palette.MutedText
 $subtitleLabel.Location = New-Object System.Drawing.Point(122, 60)
 $subtitleLabel.Size = New-Object System.Drawing.Size(460, 22)
 $form.Controls.Add($subtitleLabel)
 
 $separator = New-Object System.Windows.Forms.Panel
+$separator.Name = 'SeparatorPanel'
 $separator.Location = New-Object System.Drawing.Point(20, 105)
-$separator.Size = New-Object System.Drawing.Size(1040, 2)
-$separator.BackColor = [System.Drawing.Color]::LightGray
+$separator.Size = New-Object System.Drawing.Size(1120, 2)
+$separator.BackColor = $script:Palette.Border
 $form.Controls.Add($separator)
 
 $summaryGroup = New-Object System.Windows.Forms.GroupBox
 $summaryGroup.Text = 'Overview'
 $summaryGroup.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 $summaryGroup.Location = New-Object System.Drawing.Point(20, 120)
-$summaryGroup.Size = New-Object System.Drawing.Size(480, 70)
+$summaryGroup.Size = New-Object System.Drawing.Size(500, 82)
 $form.Controls.Add($summaryGroup)
 
 $lblQuickSummary = New-Object System.Windows.Forms.Label
@@ -911,22 +1286,22 @@ $toolTip.ShowAlways = $true
 $actionsGroup = New-Object System.Windows.Forms.GroupBox
 $actionsGroup.Text = 'Actions'
 $actionsGroup.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
-$actionsGroup.Location = New-Object System.Drawing.Point(520, 120)
-$actionsGroup.Size = New-Object System.Drawing.Size(540, 138)
+$actionsGroup.Location = New-Object System.Drawing.Point(540, 120)
+$actionsGroup.Size = New-Object System.Drawing.Size(600, 186)
 $form.Controls.Add($actionsGroup)
 
 $actionsLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $actionsLayout.Dock = 'Fill'
-$actionsLayout.Padding = '10,16,10,8'
+$actionsLayout.Padding = '14,18,14,14'
 $actionsLayout.ColumnCount = 4
 $actionsLayout.RowCount = 3
 $actionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 25))) | Out-Null
 $actionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 25))) | Out-Null
 $actionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 25))) | Out-Null
 $actionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 25))) | Out-Null
-$actionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 28))) | Out-Null
-$actionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50))) | Out-Null
-$actionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 50))) | Out-Null
+$actionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40))) | Out-Null
+$actionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 54))) | Out-Null
+$actionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 54))) | Out-Null
 $actionsGroup.Controls.Add($actionsLayout)
 
 $pingPanel = New-Object System.Windows.Forms.Panel
@@ -941,19 +1316,19 @@ $pingPanel.Controls.Add($lblPing)
 $txtPing = New-Object System.Windows.Forms.TextBox
 $txtPing.Text = $script:PingTarget
 $txtPing.Location = New-Object System.Drawing.Point(82, 2)
-$txtPing.Size = New-Object System.Drawing.Size(150, 23)
+$txtPing.Size = New-Object System.Drawing.Size(160, 23)
 $pingPanel.Controls.Add($txtPing)
 
 $lblDns = New-Object System.Windows.Forms.Label
 $lblDns.Text = 'DNS Name:'
 $lblDns.AutoSize = $true
-$lblDns.Location = New-Object System.Drawing.Point(246, 6)
+$lblDns.Location = New-Object System.Drawing.Point(258, 6)
 $pingPanel.Controls.Add($lblDns)
 
 $txtDns = New-Object System.Windows.Forms.TextBox
 $txtDns.Text = $script:DnsTarget
-$txtDns.Location = New-Object System.Drawing.Point(314, 2)
-$txtDns.Size = New-Object System.Drawing.Size(210, 23)
+$txtDns.Location = New-Object System.Drawing.Point(332, 2)
+$txtDns.Size = New-Object System.Drawing.Size(238, 23)
 $pingPanel.Controls.Add($txtDns)
 
 $null = $actionsLayout.Controls.Add($pingPanel, 0, 0)
@@ -964,18 +1339,19 @@ function New-ActionButton {
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $Text
     $btn.Dock = 'Fill'
-    $btn.Margin = New-Object System.Windows.Forms.Padding(4)
-    $btn.MinimumSize = New-Object System.Drawing.Size(0, 34)
+    $btn.Margin = New-Object System.Windows.Forms.Padding(8, 6, 8, 6)
+    $btn.MinimumSize = New-Object System.Drawing.Size(128, 42)
+    $btn.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
     return $btn
 }
 
-$btnFullScan = New-ActionButton -Text 'Run Full Scan'
-$btnTrouble  = New-ActionButton -Text 'Run Troubleshooting Checks'
+$btnFullScan = New-ActionButton -Text 'Full Scan'
+$btnTrouble  = New-ActionButton -Text 'Troubleshoot'
 $btnExport   = New-ActionButton -Text 'Export Report'
-$btnFix      = New-ActionButton -Text 'Apply Recommended Fixes'
-$btnOpenRpt  = New-ActionButton -Text 'Open Reports Folder'
-$btnEventVwr = New-ActionButton -Text 'Open Event Viewer'
-$btnDevMgr   = New-ActionButton -Text 'Open Device Manager'
+$btnFix      = New-ActionButton -Text 'Apply Fixes'
+$btnOpenRpt  = New-ActionButton -Text 'Open Reports'
+$btnEventVwr = New-ActionButton -Text 'Event Viewer'
+$btnDevMgr   = New-ActionButton -Text 'Device Manager'
 $btnHelp     = New-ActionButton -Text 'Help'
 
 $null = $actionsLayout.Controls.Add($btnFullScan, 0, 1)
@@ -999,8 +1375,8 @@ $toolTip.SetToolTip($txtPing, 'IPv4/host used by the ping check in the Network t
 $toolTip.SetToolTip($txtDns, 'DNS name used by the Network DNS resolution check.')
 
 $tabs = New-Object System.Windows.Forms.TabControl
-$tabs.Location = New-Object System.Drawing.Point(20, 272)
-$tabs.Size = New-Object System.Drawing.Size(1040, 433)
+$tabs.Location = New-Object System.Drawing.Point(20, 326)
+$tabs.Size = New-Object System.Drawing.Size(1120, 468)
 $form.Controls.Add($tabs)
 
 $imgList = New-StatusImageList
@@ -1009,14 +1385,14 @@ $script:CategoryViews = @{}
 $script:ScanCategories = @('System','Network','File System','Users','Security','Services','Tools / Utilities')
 $script:AllCategories = @($script:ScanCategories + @('Reports / Logs'))
 $script:CategoryDisplay = @{
-    'System'            = '[SYS] System'
-    'Network'           = '[NET] Network'
-    'File System'       = '[FS] File System'
-    'Users'             = '[USR] Users'
-    'Security'          = '[SEC] Security'
-    'Services'          = '[SVC] Services'
-    'Tools / Utilities' = '[TOOL] Tools / Utilities'
-    'Reports / Logs'    = '[RPT] Reports / Logs'
+    'System'            = 'System'
+    'Network'           = 'Network'
+    'File System'       = 'File System'
+    'Users'             = 'Users'
+    'Security'          = 'Security'
+    'Services'          = 'Services'
+    'Tools / Utilities' = 'Tools / Utilities'
+    'Reports / Logs'    = 'Reports / Logs'
 }
 
 function Get-CategoryFilters {
@@ -1053,13 +1429,13 @@ function Add-CategoryTab {
 
     $tab = New-Object System.Windows.Forms.TabPage
     $tab.Text = if ($script:CategoryDisplay.ContainsKey($Category)) { $script:CategoryDisplay[$Category] } else { $Category }
-    $tab.BackColor = [System.Drawing.Color]::White
+    $tab.BackColor = $script:Palette.Surface
 
     $split = New-Object System.Windows.Forms.SplitContainer
     $split.Dock = 'Fill'
     $split.Orientation = 'Vertical'
     $split.SplitterDistance = 420
-    $split.BackColor = [System.Drawing.Color]::White
+    $split.BackColor = $script:Palette.Surface
 
     $leftPanel = New-Object System.Windows.Forms.Panel
     $leftPanel.Dock = 'Fill'
@@ -1122,7 +1498,6 @@ function Add-CategoryTab {
     $details.Dock = 'Fill'
     $details.Font = New-Object System.Drawing.Font('Consolas', 9)
     $details.ReadOnly = $true
-    $details.BackColor = [System.Drawing.Color]::White
 
     $rightPanel.Controls.Add($details)
     $rightPanel.Controls.Add($catSummary)
@@ -1144,6 +1519,7 @@ function Add-CategoryTab {
 }
 
 $script:AllCategories | ForEach-Object { Add-CategoryTab -Category $_ }
+Apply-ControlTheme -Control $form -Palette $script:Palette
 
 function Update-QuickSummary {
     $all = Get-AllResults
@@ -1170,12 +1546,14 @@ function Refresh-CategoryView {
     try {
         $lv.Items.Clear()
         $allCategoryItems = @(Get-CategoryResults -Category $Category)
-        $items = if ($selectedGroup -eq '*') {
+        $items = @(
+            if ($selectedGroup -eq '*') {
             $allCategoryItems
         }
         else {
-            @($allCategoryItems | Where-Object { $_.ResultGroup -eq $selectedGroup })
-        }
+                @($allCategoryItems | Where-Object { $_.ResultGroup -eq $selectedGroup })
+            }
+        )
 
         foreach ($r in $items) {
             $item = New-Object System.Windows.Forms.ListViewItem
@@ -1191,7 +1569,7 @@ function Refresh-CategoryView {
         $warn = @($allCategoryItems | Where-Object { $_.Status -eq 'Warning' }).Count
         $fail = @($allCategoryItems | Where-Object { $_.Status -eq 'Failed' }).Count
         $na = @($allCategoryItems | Where-Object { $_.Status -eq 'Not available' }).Count
-        $shown = $items.Count
+        $shown = @($items).Count
         $view.Summary.Text = "Showing $shown item(s) in current filter."
     }
     finally {
@@ -1239,20 +1617,23 @@ function Show-ResultDetails {
     $box.Text = ($lines.ToArray() -join "`r`n")
 }
 
+$script:RefreshCategoryViewAction = ${function:Refresh-CategoryView}
+$script:ShowResultDetailsAction = ${function:Show-ResultDetails}
+
 foreach ($cat in $script:CategoryViews.Keys) {
     $catLocal = $cat
     $view = $script:CategoryViews[$catLocal]
     if ($view.FilterCombo) {
         $view.FilterCombo.add_SelectedIndexChanged({
-            Refresh-CategoryView -Category $catLocal
-            Show-ResultDetails -Category $catLocal -Result $null
+            & $script:RefreshCategoryViewAction -Category $catLocal
+            & $script:ShowResultDetailsAction -Category $catLocal -Result $null
         }.GetNewClosure())
     }
     $view.ListView.add_SelectedIndexChanged({
         $lv = $this
         $picked = $null
         if ($lv.SelectedItems.Count -gt 0) { $picked = $lv.SelectedItems[0].Tag }
-        Show-ResultDetails -Category $catLocal -Result $picked
+        & $script:ShowResultDetailsAction -Category $catLocal -Result $picked
     }.GetNewClosure())
 }
 

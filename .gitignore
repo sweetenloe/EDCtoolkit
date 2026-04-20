@@ -1,1 +1,7 @@
 Scripts/EDCtoolkit/EDC_Reports/
+Scripts/NetworkMatrix/NetworkMatrix_Reports/
+Packaging/EDCToolkitApp/build/
+Packaging/EDCToolkitApp/output/
+Packaging/EDCToolkitApp/certs/
+TODO.md
+*.vbs

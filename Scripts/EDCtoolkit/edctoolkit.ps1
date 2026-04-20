@@ -4,7 +4,8 @@
 param(
     [string]$Flag,
     [switch]$ListFlags,
-    [string]$ReportName
+    [string]$ReportName,
+    [switch]$SuppressDeprecationNotice
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -23,12 +24,51 @@ $ToolkitBannerRaw = @"
 
 $ToolkitBanner = @($ToolkitBannerRaw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
+function Get-DefaultReportBaseRoot {
+    $portableRoot = Join-Path -Path $PSScriptRoot -ChildPath 'EDC_Reports'
+
+    try {
+        $resolvedScriptRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
+    }
+    catch {
+        $resolvedScriptRoot = $PSScriptRoot
+    }
+
+    $looksPackaged = $false
+    try {
+        $looksPackaged = ($resolvedScriptRoot -match '\\WindowsApps\\') -or ($resolvedScriptRoot -match '\\Program Files\\WindowsApps\\')
+    }
+    catch {
+        $looksPackaged = $false
+    }
+
+    if ($looksPackaged) {
+        return (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'EDCtoolkit\EDC_Reports')
+    }
+
+    try {
+        if (-not (Test-Path -Path $portableRoot)) {
+            New-Item -Path $portableRoot -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            return $portableRoot
+        }
+
+        $probe = Join-Path -Path $portableRoot -ChildPath ("write_test_{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
+        Set-Content -Path $probe -Value 'ok' -Encoding ASCII -ErrorAction Stop
+        Remove-Item -Path $probe -Force -ErrorAction SilentlyContinue
+        return $portableRoot
+    }
+    catch {
+        return (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'EDCtoolkit\EDC_Reports')
+    }
+}
+
 $Script:ToolkitName = 'EDCtoolkit'
 $Script:ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-$Script:ReportBaseRoot = Join-Path -Path $Script:ScriptRoot -ChildPath 'EDC_Reports'
+$Script:ReportBaseRoot = Get-DefaultReportBaseRoot
 $Script:ReportSessionName = $null
 $Script:ReportRoot = $Script:ReportBaseRoot
 $Script:LastReports = New-Object System.Collections.Generic.List[string]
+$Script:CliIsDeprecated = $true
 
 if (-not (Test-Path -Path $Script:ReportBaseRoot)) {
     New-Item -Path $Script:ReportBaseRoot -ItemType Directory -Force | Out-Null
@@ -181,6 +221,18 @@ function Write-Status {
 
 function Pause-Toolkit {
     Read-Host 'Press Enter to continue'
+}
+
+function Show-DeprecationNotice {
+    if (-not $Script:CliIsDeprecated -or $SuppressDeprecationNotice) { return }
+
+    Write-Host ''
+    Write-Host ('!' * 74) -ForegroundColor DarkYellow
+    Write-Host ' Legacy CLI Notice' -ForegroundColor Yellow
+    Write-Host ('!' * 74) -ForegroundColor DarkYellow
+    Write-Host 'The interactive CLI is deprecated and kept only for compatibility.' -ForegroundColor Yellow
+    Write-Host 'Use Scripts\EDCtoolkit\EDCtoolkit.GUI.ps1 or EDCtoolkit.cmd for the supported experience.' -ForegroundColor Gray
+    Write-Host ''
 }
 
 function Select-ArrowMenuItem {
@@ -1969,27 +2021,36 @@ function Show-MainMenu {
     }
 }
 
-Test-MenuFlagsUnique
+function Start-EDCToolkitCli {
+    Test-MenuFlagsUnique
 
-if ($ListFlags) {
-    Show-GroupedFlags
-    return
-}
-
-if (-not [string]::IsNullOrWhiteSpace($Flag)) {
-    Initialize-ReportSession -Name $ReportName -NonInteractive
-    $action = Find-ActionByFlag -Flag $Flag
-    if ($null -eq $action) {
-        Write-Status -Level Error -Message "Unknown flag: $Flag"
+    if ($ListFlags) {
+        Show-DeprecationNotice
         Show-GroupedFlags
         return
     }
 
-    Show-Header
-    Write-Section ("Executing: {0}" -f $action.Label)
-    Invoke-ActionHandler -Handler $action.Handler -Label $action.Label
-    return
+    if (-not [string]::IsNullOrWhiteSpace($Flag)) {
+        Initialize-ReportSession -Name $ReportName -NonInteractive
+        $action = Find-ActionByFlag -Flag $Flag
+        if ($null -eq $action) {
+            Write-Status -Level Error -Message "Unknown flag: $Flag"
+            Show-GroupedFlags
+            return
+        }
+
+        Show-Header
+        Show-DeprecationNotice
+        Write-Section ("Executing: {0}" -f $action.Label)
+        Invoke-ActionHandler -Handler $action.Handler -Label $action.Label
+        return
+    }
+
+    Initialize-ReportSession
+    Show-DeprecationNotice
+    Show-MainMenu
 }
 
-Initialize-ReportSession
-Show-MainMenu
+if ($MyInvocation.InvocationName -ne '.') {
+    Start-EDCToolkitCli
+}
