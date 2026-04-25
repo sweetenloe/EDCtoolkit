@@ -13,12 +13,16 @@
 - `EDCtoolkit.cmd`: launcher convenience script
 
 ## Quick Start
+<center>
+<img width="1124" height="548" alt="20260425-0429-32 4241111" src="https://github.com/user-attachments/assets/b7637693-a3a0-4e4f-a555-7fcc23d6dd63" />=
+</center>
+<br>
+<h3>Legacy CLI TUI</h3> 
+<br>
+<i> Set scripts to run on your system or run bypass ExecutionPolicy</i>
+<br><br>
 
-### Legacy CLI
-
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\Scripts\EDCtoolkit\edctoolkit.ps1
-```
+``powershell.exe -ExecutionPolicy Bypass -File .\Scripts\EDCtoolkit\edctoolkit.ps1``
 
 ## Reports
 
@@ -31,5 +35,4 @@ Reports are saved under:
 
 - Run as Administrator for the most complete results and fix actions.
 
-<center><h3>**GUI Wrapper currently under development**</h3></center>
-<img width="1166" height="782" alt="image" src="https://github.com/user-attachments/assets/c61beccd-9904-428c-bd8b-a545c48794c9" />
+
