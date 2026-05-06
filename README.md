@@ -9,8 +9,8 @@
 
 ## What It Includes
 
-- `Scripts/EDCtoolkit/edctoolkit.ps1`: legacy CLI toolkit (deprecated, retained for compatibility)
-- `EDCtoolkit.cmd`: launcher convenience script
+- `Scripts/EDCtoolkit/edctoolkit.ps1`
+- `EDCtoolkit.cmd`
 
 ## Quick Start
 <center>
@@ -20,6 +20,7 @@
 <h3>Legacy CLI TUI</h3> 
 <br>
 <i> Set scripts to run on your system or run bypass ExecutionPolicy</i>
+<i> MOSTLY passive, but dont forget to take a backup!!</i>
 <br><br>
 
 ``powershell.exe -ExecutionPolicy Bypass -File .\Scripts\EDCtoolkit\edctoolkit.ps1``

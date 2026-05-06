@@ -1,1 +1,8 @@
-Scripts/NetworkMatrix/
+*
+!.gitignore
+
+!Scripts/
+!Scripts/EDCtoolkit/
+!Scripts/EDCtoolkit/edctoolkit.ps1
+
+Scripts/EDCtoolkit/EDC_Reports/
